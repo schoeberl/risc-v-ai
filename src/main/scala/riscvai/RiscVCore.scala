@@ -3,11 +3,10 @@ package riscvai
 import chisel3._
 import chisel3.util._
 
-/** A small single-cycle RV32I processor core.
+/** A small single-cycle RV32IM processor core.
   *
   * Instruction and data memories are external and combinationally read. The
-  * core currently implements the RV32I integer ALU instructions, branches,
-  * jumps, LUI/AUIPC, LW, and SW.
+  * core implements the RV32I integer instructions and the RV32M extension.
   */
 class RiscVCore(resetVector: BigInt = 0) extends Module {
   val io = IO(new Bundle {
@@ -70,6 +69,13 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   val writeEnable = WireDefault(false.B)
   val writeData = WireDefault(0.U(32.W))
   val illegal = WireDefault(true.B)
+
+  val unsignedProduct = rs1Value * rs2Value
+  val signedProduct = rs1Value.asSInt * rs2Value.asSInt
+  val signedUnsignedProduct = rs1Value.asSInt * Cat(0.U(1.W), rs2Value).asSInt
+  val signedDivideOverflow = rs1Value === "h80000000".U && rs2Value === "hffffffff".U
+  val signedQuotient = (rs1Value.asSInt / rs2Value.asSInt).asUInt
+  val signedRemainder = (rs1Value.asSInt % rs2Value.asSInt).asUInt
 
   io.instructionAddress := pc
   io.dataAddress := 0.U
@@ -212,24 +218,71 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
     is(OpcodeOp) {
       illegal := false.B
       writeEnable := true.B
-      switch(funct3) {
-        is("b000".U) {
-          when(funct7 === "b0000000".U) { writeData := rs1Value + rs2Value } // ADD
-            .elsewhen(funct7 === "b0100000".U) { writeData := rs1Value - rs2Value } // SUB
-            .otherwise { illegal := true.B }
+      when(funct7 === "b0000001".U) {
+        switch(funct3) {
+          is("b000".U) { writeData := unsignedProduct(31, 0) } // MUL
+          is("b001".U) { writeData := signedProduct.asUInt(63, 32) } // MULH
+          is("b010".U) { writeData := signedUnsignedProduct.asUInt(63, 32) } // MULHSU
+          is("b011".U) { writeData := unsignedProduct(63, 32) } // MULHU
+          is("b100".U) { // DIV
+            writeData := Mux(
+              rs2Value === 0.U,
+              "hffffffff".U,
+              Mux(signedDivideOverflow, "h80000000".U, signedQuotient)
+            )
+          }
+          is("b101".U) { // DIVU
+            writeData := Mux(rs2Value === 0.U, "hffffffff".U, rs1Value / rs2Value)
+          }
+          is("b110".U) { // REM
+            writeData := Mux(
+              rs2Value === 0.U,
+              rs1Value,
+              Mux(signedDivideOverflow, 0.U, signedRemainder)
+            )
+          }
+          is("b111".U) { // REMU
+            writeData := Mux(rs2Value === 0.U, rs1Value, rs1Value % rs2Value)
+          }
         }
-        is("b001".U) { writeData := rs1Value << rs2Value(4, 0) } // SLL
-        is("b010".U) { writeData := (rs1Value.asSInt < rs2Value.asSInt).asUInt } // SLT
-        is("b011".U) { writeData := rs1Value < rs2Value } // SLTU
-        is("b100".U) { writeData := rs1Value ^ rs2Value } // XOR
-        is("b101".U) {
-          when(funct7 === "b0000000".U) { writeData := rs1Value >> rs2Value(4, 0) } // SRL
-            .elsewhen(funct7 === "b0100000".U) {
-              writeData := (rs1Value.asSInt >> rs2Value(4, 0)).asUInt // SRA
-            }.otherwise { illegal := true.B }
+      }.otherwise {
+        switch(funct3) {
+          is("b000".U) {
+            when(funct7 === "b0000000".U) { writeData := rs1Value + rs2Value } // ADD
+              .elsewhen(funct7 === "b0100000".U) { writeData := rs1Value - rs2Value } // SUB
+              .otherwise { illegal := true.B }
+          }
+          is("b001".U) {
+            writeData := rs1Value << rs2Value(4, 0) // SLL
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b010".U) {
+            writeData := (rs1Value.asSInt < rs2Value.asSInt).asUInt // SLT
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b011".U) {
+            writeData := rs1Value < rs2Value // SLTU
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b100".U) {
+            writeData := rs1Value ^ rs2Value // XOR
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b101".U) {
+            when(funct7 === "b0000000".U) { writeData := rs1Value >> rs2Value(4, 0) } // SRL
+              .elsewhen(funct7 === "b0100000".U) {
+                writeData := (rs1Value.asSInt >> rs2Value(4, 0)).asUInt // SRA
+              }.otherwise { illegal := true.B }
+          }
+          is("b110".U) {
+            writeData := rs1Value | rs2Value // OR
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b111".U) {
+            writeData := rs1Value & rs2Value // AND
+            illegal := funct7 =/= "b0000000".U
+          }
         }
-        is("b110".U) { writeData := rs1Value | rs2Value } // OR
-        is("b111".U) { writeData := rs1Value & rs2Value } // AND
       }
     }
   }

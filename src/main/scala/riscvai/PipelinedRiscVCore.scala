@@ -24,7 +24,7 @@ private class ExecuteMemoryWriteback extends Bundle {
   val illegal = Bool()
 }
 
-/** A three-stage, single-issue RV32I processor.
+/** A three-stage, single-issue RV32IM processor.
   *
   * The stages are fetch, decode/execute, and memory/writeback. Results from the
   * final stage are forwarded to decode/execute. A load followed immediately by
@@ -181,6 +181,13 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val redirect = WireDefault(false.B)
   val redirectTarget = WireDefault(0.U(32.W))
 
+  val unsignedProduct = rs1Value * rs2Value
+  val signedProduct = rs1Value.asSInt * rs2Value.asSInt
+  val signedUnsignedProduct = rs1Value.asSInt * Cat(0.U(1.W), rs2Value).asSInt
+  val signedDivideOverflow = rs1Value === "h80000000".U && rs2Value === "hffffffff".U
+  val signedQuotient = (rs1Value.asSInt / rs2Value.asSInt).asUInt
+  val signedRemainder = (rs1Value.asSInt % rs2Value.asSInt).asUInt
+
   switch(opcode) {
     is(OpcodeLui) {
       illegal := false.B
@@ -295,48 +302,77 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     is(OpcodeOp) {
       illegal := false.B
       registerWrite := true.B
-      switch(funct3) {
-        is("b000".U) {
-          when(funct7 === "b0000000".U) {
-            result := rs1Value + rs2Value
-          }.elsewhen(funct7 === "b0100000".U) {
-            result := rs1Value - rs2Value
-          }.otherwise {
-            illegal := true.B
+      when(funct7 === "b0000001".U) {
+        switch(funct3) {
+          is("b000".U) { result := unsignedProduct(31, 0) } // MUL
+          is("b001".U) { result := signedProduct.asUInt(63, 32) } // MULH
+          is("b010".U) { result := signedUnsignedProduct.asUInt(63, 32) } // MULHSU
+          is("b011".U) { result := unsignedProduct(63, 32) } // MULHU
+          is("b100".U) { // DIV
+            result := Mux(
+              rs2Value === 0.U,
+              "hffffffff".U,
+              Mux(signedDivideOverflow, "h80000000".U, signedQuotient)
+            )
+          }
+          is("b101".U) { // DIVU
+            result := Mux(rs2Value === 0.U, "hffffffff".U, rs1Value / rs2Value)
+          }
+          is("b110".U) { // REM
+            result := Mux(
+              rs2Value === 0.U,
+              rs1Value,
+              Mux(signedDivideOverflow, 0.U, signedRemainder)
+            )
+          }
+          is("b111".U) { // REMU
+            result := Mux(rs2Value === 0.U, rs1Value, rs1Value % rs2Value)
           }
         }
-        is("b001".U) {
-          result := rs1Value << rs2Value(4, 0)
-          illegal := funct7 =/= "b0000000".U
-        }
-        is("b010".U) {
-          result := (rs1Value.asSInt < rs2Value.asSInt).asUInt
-          illegal := funct7 =/= "b0000000".U
-        }
-        is("b011".U) {
-          result := rs1Value < rs2Value
-          illegal := funct7 =/= "b0000000".U
-        }
-        is("b100".U) {
-          result := rs1Value ^ rs2Value
-          illegal := funct7 =/= "b0000000".U
-        }
-        is("b101".U) {
-          when(funct7 === "b0000000".U) {
-            result := rs1Value >> rs2Value(4, 0)
-          }.elsewhen(funct7 === "b0100000".U) {
-            result := (rs1Value.asSInt >> rs2Value(4, 0)).asUInt
-          }.otherwise {
-            illegal := true.B
+      }.otherwise {
+        switch(funct3) {
+          is("b000".U) {
+            when(funct7 === "b0000000".U) {
+              result := rs1Value + rs2Value
+            }.elsewhen(funct7 === "b0100000".U) {
+              result := rs1Value - rs2Value
+            }.otherwise {
+              illegal := true.B
+            }
           }
-        }
-        is("b110".U) {
-          result := rs1Value | rs2Value
-          illegal := funct7 =/= "b0000000".U
-        }
-        is("b111".U) {
-          result := rs1Value & rs2Value
-          illegal := funct7 =/= "b0000000".U
+          is("b001".U) {
+            result := rs1Value << rs2Value(4, 0)
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b010".U) {
+            result := (rs1Value.asSInt < rs2Value.asSInt).asUInt
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b011".U) {
+            result := rs1Value < rs2Value
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b100".U) {
+            result := rs1Value ^ rs2Value
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b101".U) {
+            when(funct7 === "b0000000".U) {
+              result := rs1Value >> rs2Value(4, 0)
+            }.elsewhen(funct7 === "b0100000".U) {
+              result := (rs1Value.asSInt >> rs2Value(4, 0)).asUInt
+            }.otherwise {
+              illegal := true.B
+            }
+          }
+          is("b110".U) {
+            result := rs1Value | rs2Value
+            illegal := funct7 =/= "b0000000".U
+          }
+          is("b111".U) {
+            result := rs1Value & rs2Value
+            illegal := funct7 =/= "b0000000".U
+          }
         }
       }
     }

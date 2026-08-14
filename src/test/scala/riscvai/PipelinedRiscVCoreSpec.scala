@@ -19,6 +19,9 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     (BigInt(funct7) << 25) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
       (BigInt(funct3) << 12) | (BigInt(rd) << 7) | BigInt(0x33)
 
+  private def uType(imm20: Int, rd: Int): BigInt =
+    (bits(imm20, 20) << 12) | (BigInt(rd) << 7) | BigInt(0x37)
+
   private def sType(imm: Int, rs2: Int, rs1: Int, funct3: Int): BigInt = {
     val encoded = bits(imm, 12)
     ((encoded >> 5) << 25) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
@@ -166,6 +169,48 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         expectRegister(dut, 3, BigInt("ffffff80", 16))
         expectRegister(dut, 5, 65534)
         expectRegister(dut, 6, BigInt("fffffffe", 16))
+      }
+    }
+
+    "executes the complete RV32M extension including division edge cases" in {
+      simulate(new PipelinedRiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(-7, 0, 0, 1),             // addi x1, x0, -7
+          BigInt(0x04) -> iType(3, 0, 0, 2),              // addi x2, x0, 3
+          BigInt(0x08) -> rType(1, 2, 1, 0, 3),           // mul    x3, x1, x2
+          BigInt(0x0c) -> rType(1, 2, 1, 1, 4),           // mulh   x4, x1, x2
+          BigInt(0x10) -> rType(1, 2, 1, 2, 5),           // mulhsu x5, x1, x2
+          BigInt(0x14) -> rType(1, 2, 1, 3, 6),           // mulhu  x6, x1, x2
+          BigInt(0x18) -> rType(1, 2, 1, 4, 7),           // div    x7, x1, x2
+          BigInt(0x1c) -> rType(1, 2, 1, 5, 8),           // divu   x8, x1, x2
+          BigInt(0x20) -> rType(1, 2, 1, 6, 9),           // rem    x9, x1, x2
+          BigInt(0x24) -> rType(1, 2, 1, 7, 10),          // remu   x10, x1, x2
+          BigInt(0x28) -> rType(1, 0, 1, 4, 11),          // div    x11, x1, x0
+          BigInt(0x2c) -> rType(1, 0, 1, 6, 12),          // rem    x12, x1, x0
+          BigInt(0x30) -> uType(0x80000, 13),             // lui    x13, 0x80000
+          BigInt(0x34) -> iType(-1, 0, 0, 14),            // addi   x14, x0, -1
+          BigInt(0x38) -> rType(1, 14, 13, 4, 15),        // div    x15, x13, x14
+          BigInt(0x3c) -> rType(1, 14, 13, 6, 16)         // rem    x16, x13, x14
+        )
+        val memory = collection.mutable.Map.empty[BigInt, BigInt]
+
+        for (_ <- 0 until 24) {
+          runCycle(dut, program, memory)
+        }
+
+        expectRegister(dut, 3, BigInt("ffffffeb", 16))
+        expectRegister(dut, 4, BigInt("ffffffff", 16))
+        expectRegister(dut, 5, BigInt("ffffffff", 16))
+        expectRegister(dut, 6, 2)
+        expectRegister(dut, 7, BigInt("fffffffe", 16))
+        expectRegister(dut, 8, BigInt("55555553", 16))
+        expectRegister(dut, 9, BigInt("ffffffff", 16))
+        expectRegister(dut, 10, 0)
+        expectRegister(dut, 11, BigInt("ffffffff", 16))
+        expectRegister(dut, 12, BigInt("fffffff9", 16))
+        expectRegister(dut, 15, BigInt("80000000", 16))
+        expectRegister(dut, 16, 0)
       }
     }
   }

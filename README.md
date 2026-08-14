@@ -59,6 +59,7 @@ The first milestone implements:
 
 - RV32I register-register ALU instructions
 - RV32I immediate ALU instructions
+- the complete RV32M multiply/divide extension
 - `LUI` and `AUIPC`
 - all six conditional branches
 - `JAL` and `JALR`
@@ -70,9 +71,14 @@ The first milestone implements:
 Tests execute small machine-code programs and verify arithmetic, the hardwired
 zero register, control flow, return addresses, and memory traffic.
 
+The current RV32M implementation is combinational. It provides architectural
+correctness for software testing; a multicycle multiply/divide unit can be added
+later to improve synthesis timing and area.
+
 ## Next milestones
 
 - instruction and data-memory modules around the core
+- the RV32A atomic extension
 - a compliance-test runner using a RISC-V cross compiler
 - exceptions, CSRs, and the privileged execution environment
 - differential testing of the pipelined core against the single-cycle reference
