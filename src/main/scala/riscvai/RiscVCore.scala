@@ -18,6 +18,7 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
     val dataReadData = Input(UInt(32.W))
     val dataWriteData = Output(UInt(32.W))
     val dataWriteEnable = Output(Bool())
+    val dataWriteMask = Output(UInt(4.W))
 
     val illegalInstruction = Output(Bool())
 
@@ -71,9 +72,10 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   val illegal = WireDefault(true.B)
 
   io.instructionAddress := pc
-  io.dataAddress := rs1Value + immediateS
-  io.dataWriteData := rs2Value
+  io.dataAddress := 0.U
+  io.dataWriteData := 0.U
   io.dataWriteEnable := false.B
+  io.dataWriteMask := 0.U
   io.illegalInstruction := illegal
   io.debugRegisterData := Mux(
     io.debugRegisterAddress === 0.U,
@@ -132,23 +134,53 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
     }
 
     is(OpcodeLoad) {
-      io.dataAddress := rs1Value + immediateI
-      when(funct3 === "b010".U) { // LW
+      val address = rs1Value + immediateI
+      val byteShift = Cat(address(1, 0), 0.U(3.W))
+      val shiftedReadData = io.dataReadData >> byteShift
+      val loadedByte = shiftedReadData(7, 0)
+      val loadedHalfword = shiftedReadData(15, 0)
+      val validWidth = funct3 === "b000".U || funct3 === "b001".U ||
+        funct3 === "b010".U || funct3 === "b100".U || funct3 === "b101".U
+      val aligned = MuxLookup(funct3, true.B)(Seq(
+        "b001".U -> !address(0),
+        "b010".U -> (address(1, 0) === 0.U),
+        "b101".U -> !address(0)
+      ))
+
+      io.dataAddress := address & "hfffffffc".U
+      when(validWidth && aligned) {
         illegal := false.B
         writeEnable := true.B
-        writeData := io.dataReadData
-      }.otherwise {
-        illegal := true.B
+        switch(funct3) {
+          is("b000".U) { writeData := Cat(Fill(24, loadedByte(7)), loadedByte) } // LB
+          is("b001".U) { writeData := Cat(Fill(16, loadedHalfword(15)), loadedHalfword) } // LH
+          is("b010".U) { writeData := io.dataReadData } // LW
+          is("b100".U) { writeData := Cat(0.U(24.W), loadedByte) } // LBU
+          is("b101".U) { writeData := Cat(0.U(16.W), loadedHalfword) } // LHU
+        }
       }
     }
 
     is(OpcodeStore) {
-      io.dataAddress := rs1Value + immediateS
-      when(funct3 === "b010".U) { // SW
+      val address = rs1Value + immediateS
+      val byteShift = Cat(address(1, 0), 0.U(3.W))
+      val laneMask = MuxLookup(funct3, 0.U(4.W))(Seq(
+        "b000".U -> 1.U(4.W),
+        "b001".U -> 3.U(4.W),
+        "b010".U -> 15.U(4.W)
+      ))
+      val validWidth = funct3 === "b000".U || funct3 === "b001".U || funct3 === "b010".U
+      val aligned = MuxLookup(funct3, true.B)(Seq(
+        "b001".U -> !address(0),
+        "b010".U -> (address(1, 0) === 0.U)
+      ))
+
+      io.dataAddress := address & "hfffffffc".U
+      io.dataWriteData := rs2Value << byteShift
+      when(validWidth && aligned) {
         illegal := false.B
         io.dataWriteEnable := true.B
-      }.otherwise {
-        illegal := true.B
+        io.dataWriteMask := (laneMask << address(1, 0))(3, 0)
       }
     }
 

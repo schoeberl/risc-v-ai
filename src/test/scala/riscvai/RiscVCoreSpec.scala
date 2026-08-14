@@ -65,6 +65,16 @@ class RiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     dut.io.debugRegisterData.expect((value & BigInt("ffffffff", 16)).U)
   }
 
+  private def mergeWrite(oldValue: BigInt, newValue: BigInt, mask: BigInt): BigInt =
+    (0 until 4).foldLeft(oldValue) { (value, lane) =>
+      if (mask.testBit(lane)) {
+        val byteMask = BigInt(0xff) << (lane * 8)
+        (value & ~byteMask) | (newValue & byteMask)
+      } else {
+        value
+      }
+    } & BigInt("ffffffff", 16)
+
   "RiscVCore" - {
     "executes integer arithmetic and keeps x0 hardwired to zero" in {
       simulate(new RiscVCore) { dut =>
@@ -137,13 +147,54 @@ class RiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
           dut.io.dataReadData.poke(memory.getOrElse(address, BigInt(0)).U)
           dut.io.illegalInstruction.expect(false.B)
           if (dut.io.dataWriteEnable.peek().litToBoolean) {
-            memory += address -> dut.io.dataWriteData.peek().litValue
+            val oldValue = memory.getOrElse(address, BigInt(0))
+            val newValue = dut.io.dataWriteData.peek().litValue
+            val mask = dut.io.dataWriteMask.peek().litValue
+            memory += address -> mergeWrite(oldValue, newValue, mask)
           }
           dut.clock.step()
         }
 
         memory(16) mustBe 42
         expectRegister(dut, 2, 42)
+      }
+    }
+
+    "loads and stores signed and unsigned bytes and halfwords" in {
+      simulate(new RiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(-128, 0, 0, 1),           // addi x1, x0, -128
+          BigInt(0x04) -> sType(1, 1, 0, 0),             // sb   x1, 1(x0)
+          BigInt(0x08) -> iType(1, 0, 4, 2, 0x03),       // lbu  x2, 1(x0)
+          BigInt(0x0c) -> iType(1, 0, 0, 3, 0x03),       // lb   x3, 1(x0)
+          BigInt(0x10) -> iType(-2, 0, 0, 4),            // addi x4, x0, -2
+          BigInt(0x14) -> sType(2, 4, 0, 1),             // sh   x4, 2(x0)
+          BigInt(0x18) -> iType(2, 0, 5, 5, 0x03),       // lhu  x5, 2(x0)
+          BigInt(0x1c) -> iType(2, 0, 1, 6, 0x03)        // lh   x6, 2(x0)
+        )
+        var memory = Map.empty[BigInt, BigInt]
+
+        for (_ <- 0 until program.size) {
+          val pc = dut.io.instructionAddress.peek().litValue
+          dut.io.instruction.poke(program(pc).U)
+          val address = dut.io.dataAddress.peek().litValue
+          dut.io.dataReadData.poke(memory.getOrElse(address, BigInt(0)).U)
+          dut.io.illegalInstruction.expect(false.B)
+          if (dut.io.dataWriteEnable.peek().litToBoolean) {
+            val oldValue = memory.getOrElse(address, BigInt(0))
+            val newValue = dut.io.dataWriteData.peek().litValue
+            val mask = dut.io.dataWriteMask.peek().litValue
+            memory += address -> mergeWrite(oldValue, newValue, mask)
+          }
+          dut.clock.step()
+        }
+
+        memory(0) mustBe BigInt("fffe8000", 16)
+        expectRegister(dut, 2, 128)
+        expectRegister(dut, 3, BigInt("ffffff80", 16))
+        expectRegister(dut, 5, 65534)
+        expectRegister(dut, 6, BigInt("fffffffe", 16))
       }
     }
   }

@@ -20,6 +20,7 @@ private class ExecuteMemoryWriteback extends Bundle {
   val registerWrite = Bool()
   val memoryRead = Bool()
   val memoryWrite = Bool()
+  val memoryFunction = UInt(3.W)
   val illegal = Bool()
 }
 
@@ -39,6 +40,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     val dataReadData = Input(UInt(32.W))
     val dataWriteData = Output(UInt(32.W))
     val dataWriteEnable = Output(Bool())
+    val dataWriteMask = Output(UInt(4.W))
 
     val illegalInstruction = Output(Bool())
     val pipelineStall = Output(Bool())
@@ -69,9 +71,20 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   private val executeMemoryWriteback = RegInit(0.U.asTypeOf(new ExecuteMemoryWriteback))
   val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
 
+  val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
+  val shiftedReadData = io.dataReadData >> memoryByteShift
+  val loadedByte = shiftedReadData(7, 0)
+  val loadedHalfword = shiftedReadData(15, 0)
+  val loadData = MuxLookup(executeMemoryWriteback.memoryFunction, io.dataReadData)(Seq(
+    "b000".U -> Cat(Fill(24, loadedByte(7)), loadedByte),
+    "b001".U -> Cat(Fill(16, loadedHalfword(15)), loadedHalfword),
+    "b010".U -> io.dataReadData,
+    "b100".U -> Cat(0.U(24.W), loadedByte),
+    "b101".U -> Cat(0.U(16.W), loadedHalfword)
+  ))
   val writebackData = Mux(
     executeMemoryWriteback.memoryRead,
-    io.dataReadData,
+    loadData,
     executeMemoryWriteback.result
   )
   val writebackActive = executeMemoryWriteback.valid &&
@@ -84,8 +97,21 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   registers(0) := 0.U
 
   io.instructionAddress := fetchPc
-  io.dataAddress := executeMemoryWriteback.address
-  io.dataWriteData := executeMemoryWriteback.storeData
+  val storeLaneMask = MuxLookup(executeMemoryWriteback.memoryFunction, 0.U(4.W))(Seq(
+    "b000".U -> 1.U(4.W),
+    "b001".U -> 3.U(4.W),
+    "b010".U -> 15.U(4.W)
+  ))
+  val shiftedStoreMask = (storeLaneMask << executeMemoryWriteback.address(1, 0))(3, 0)
+
+  io.dataAddress := executeMemoryWriteback.address & "hfffffffc".U
+  io.dataWriteData := executeMemoryWriteback.storeData << memoryByteShift
+  io.dataWriteMask := Mux(
+    executeMemoryWriteback.valid && executeMemoryWriteback.memoryWrite &&
+      !executeMemoryWriteback.illegal,
+    shiftedStoreMask,
+    0.U
+  )
   io.dataWriteEnable := executeMemoryWriteback.valid &&
     executeMemoryWriteback.memoryWrite && !executeMemoryWriteback.illegal
   io.illegalInstruction := executeMemoryWriteback.valid && executeMemoryWriteback.illegal
@@ -150,6 +176,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val registerWrite = WireDefault(false.B)
   val memoryRead = WireDefault(false.B)
   val memoryWrite = WireDefault(false.B)
+  val memoryFunction = WireDefault(0.U(3.W))
   val illegal = WireDefault(true.B)
   val redirect = WireDefault(false.B)
   val redirectTarget = WireDefault(0.U(32.W))
@@ -207,18 +234,32 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
     is(OpcodeLoad) {
       address := rs1Value + immediateI
-      when(funct3 === "b010".U) {
+      val validWidth = funct3 === "b000".U || funct3 === "b001".U ||
+        funct3 === "b010".U || funct3 === "b100".U || funct3 === "b101".U
+      val aligned = MuxLookup(funct3, true.B)(Seq(
+        "b001".U -> !address(0),
+        "b010".U -> (address(1, 0) === 0.U),
+        "b101".U -> !address(0)
+      ))
+      when(validWidth && aligned) {
         illegal := false.B
         registerWrite := true.B
         memoryRead := true.B
+        memoryFunction := funct3
       }
     }
 
     is(OpcodeStore) {
       address := rs1Value + immediateS
-      when(funct3 === "b010".U) {
+      val validWidth = funct3 === "b000".U || funct3 === "b001".U || funct3 === "b010".U
+      val aligned = MuxLookup(funct3, true.B)(Seq(
+        "b001".U -> !address(0),
+        "b010".U -> (address(1, 0) === 0.U)
+      ))
+      when(validWidth && aligned) {
         illegal := false.B
         memoryWrite := true.B
+        memoryFunction := funct3
       }
     }
 
@@ -315,6 +356,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.registerWrite := registerWrite
     executeMemoryWriteback.memoryRead := memoryRead
     executeMemoryWriteback.memoryWrite := memoryWrite
+    executeMemoryWriteback.memoryFunction := memoryFunction
     executeMemoryWriteback.illegal := illegal
 
     when(redirect && fetchDecodeExecute.valid && !illegal) {

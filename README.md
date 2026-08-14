@@ -62,7 +62,8 @@ The first milestone implements:
 - `LUI` and `AUIPC`
 - all six conditional branches
 - `JAL` and `JALR`
-- word loads and stores (`LW` and `SW`)
+- all RV32I loads and stores (`LB`, `LBU`, `LH`, `LHU`, `LW`, `SB`, `SH`, and `SW`)
+- four byte-write strobes for partial memory writes
 - detection of unsupported instructions
 - a read-only register debug port
 
@@ -71,7 +72,6 @@ zero register, control flow, return addresses, and memory traffic.
 
 ## Next milestones
 
-- byte and halfword loads/stores with byte write enables
 - instruction and data-memory modules around the core
 - a compliance-test runner using a RISC-V cross compiler
 - exceptions, CSRs, and the privileged execution environment
