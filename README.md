@@ -1,5 +1,7 @@
 # risc-v-ai
 
+[![CI](https://github.com/schoeberl/risc-v-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/schoeberl/risc-v-ai/actions/workflows/ci.yml)
+
 An educational, single-cycle RISC-V processor written in
 [Chisel](https://www.chisel-lang.org/).
 
