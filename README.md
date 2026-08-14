@@ -25,9 +25,33 @@ sbt test
 
 ## Processor
 
-`riscvai.RiscVCore` is a 32-bit core with separate instruction and data-memory
-interfaces. Memories are kept outside the core so the same processor can be
-connected to simulation models, FPGA block RAM, or a system bus.
+The project contains two 32-bit cores with the same separate instruction and
+data-memory interface:
+
+- `riscvai.RiscVCore` is the original single-cycle reference implementation.
+- `riscvai.PipelinedRiscVCore` is the three-stage implementation.
+
+Memories are kept outside the cores so they can be connected to simulation
+models, FPGA block RAM, or a system bus.
+
+### Three-stage pipeline
+
+The pipelined core is organized as:
+
+1. **Fetch** maintains the PC and fetches an instruction.
+2. **Decode/Execute** reads registers, decodes the instruction, runs the ALU,
+   resolves control flow, and calculates memory addresses.
+3. **Memory/Writeback** performs data-memory access and commits register results.
+
+The core forwards stage-three results to stage two. A load followed immediately
+by a dependent instruction stalls for one cycle, avoiding a combinational path
+from data memory through the next instruction's ALU. Taken branches and jumps
+flush the sequentially fetched instruction. Pipeline valid bits prevent bubbles
+from changing architectural state.
+
+Retirement outputs report the PC and instruction reaching the final stage. A
+stall output and read-only register debug port support simulation and future
+compliance testing.
 
 The first milestone implements:
 
@@ -49,6 +73,6 @@ zero register, control flow, return addresses, and memory traffic.
 - instruction and data-memory modules around the core
 - a compliance-test runner using a RISC-V cross compiler
 - exceptions, CSRs, and the privileged execution environment
-- optional pipelining after the single-cycle reference core is complete
+- differential testing of the pipelined core against the single-cycle reference
 
 The original `riscvai.Adder` remains as a minimal Chisel example.
