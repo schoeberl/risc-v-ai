@@ -203,10 +203,12 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        for (_ <- 0 until 24) {
-          runCycle(dut, program, memory)
+        var dividerStalls = 0
+        for (_ <- 0 until 300) {
+          if (runCycle(dut, program, memory)) dividerStalls += 1
         }
 
+        dividerStalls must be >= 256
         expectRegister(dut, 3, BigInt("ffffffeb", 16))
         expectRegister(dut, 4, BigInt("ffffffff", 16))
         expectRegister(dut, 5, BigInt("ffffffff", 16))
@@ -219,6 +221,32 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         expectRegister(dut, 12, BigInt("fffffff9", 16))
         expectRegister(dut, 15, BigInt("80000000", 16))
         expectRegister(dut, 16, 0)
+      }
+    }
+
+    "stalls for iterative division and forwards the completed result" in {
+      simulate(new PipelinedRiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(100, 0, 0, 1),           // addi x1, x0, 100
+          BigInt(0x04) -> iType(7, 0, 0, 2),             // addi x2, x0, 7
+          BigInt(0x08) -> rType(1, 2, 1, 4, 3),          // div  x3, x1, x2
+          BigInt(0x0c) -> iType(1, 3, 0, 4),             // addi x4, x3, 1
+          BigInt(0x10) -> rType(1, 2, 1, 6, 5),          // rem  x5, x1, x2
+          BigInt(0x14) -> iType(1, 5, 0, 6)              // addi x6, x5, 1
+        )
+        val memory = collection.mutable.Map.empty[BigInt, BigInt]
+        var dividerStalls = 0
+
+        for (_ <- 0 until 90) {
+          if (runCycle(dut, program, memory)) dividerStalls += 1
+        }
+
+        dividerStalls must be >= 64
+        expectRegister(dut, 3, 14)
+        expectRegister(dut, 4, 15)
+        expectRegister(dut, 5, 2)
+        expectRegister(dut, 6, 3)
       }
     }
 

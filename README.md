@@ -80,9 +80,10 @@ Tests execute small machine-code programs and verify arithmetic, the hardwired
 zero register, control flow, return addresses, memory traffic, and trap/return
 behavior.
 
-The current RV32M implementation is combinational. It provides architectural
-correctness for software testing; a multicycle multiply/divide unit can be added
-later to improve synthesis timing and area.
+The pipelined core uses a shared 32-cycle iterative divider for `DIV`, `DIVU`,
+`REM`, and `REMU`; the pipeline stalls until its quotient and remainder are
+ready. Multiplication remains combinational. The single-cycle reference core
+keeps combinational RV32M operations for straightforward architectural checking.
 
 RV32A reservations are local to the hart and are invalidated by local stores.
 Atomic read-modify-write operations assume this core is the only memory-bus
@@ -94,6 +95,31 @@ trap to direct-mode `mtvec`, and an M-mode handler can resume with `MRET`. The
 core still runs only in M-mode; it does not yet implement user-mode privilege,
 `ECALL`/`EBREAK`, memory-access faults, or live interrupt sources. Until a
 platform timer is added, the `time` CSR aliases the cycle counter.
+
+## RTL and Sky130 PPA
+
+Generate synthesis-ready SystemVerilog for the pipelined core with:
+
+```sh
+make rtl
+```
+
+The generated files are written to `generated/`. Run the Sky130A LibreLane flow
+at a 10 ns (100 MHz) clock target with:
+
+```sh
+make ppa-sky130
+```
+
+By default, the Make target uses LibreLane from `~/librelane` and the PDK from
+`~/.ciel`. Override `LIBRELANE_ROOT` or `SKY130_PDK_ROOT` when they are installed
+elsewhere. LibreLane run data is written below `ppa/librelane/runs/` and is not
+tracked by Git.
+
+The current target is the processor core without instruction/data memories or
+peripherals. LibreLane's fallback SDC models 2 ns input and output delays; a SoC
+wrapper should replace those assumptions when memories and peripherals are
+integrated.
 
 ## Next milestones
 

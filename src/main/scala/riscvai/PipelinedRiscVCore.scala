@@ -90,6 +90,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val reservationValid = RegInit(false.B)
   val reservationAddress = RegInit(0.U(32.W))
   private val csrs = Module(new MachineCsrs)
+  private val divider = Module(new IterativeDivider)
   val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
@@ -208,8 +209,6 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.rd =/= 0.U &&
     ((usesRs1 && rs1 === executeMemoryWriteback.rd) ||
       (usesRs2 && rs2 === executeMemoryWriteback.rd))
-  io.pipelineStall := loadUseHazard
-
   private def readRegister(address: UInt): UInt =
     Mux(
       address === 0.U,
@@ -223,6 +222,18 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val rs1Value = readRegister(rs1)
   val rs2Value = readRegister(rs2)
+  val divideInstruction = fetchDecodeExecute.valid && opcode === OpcodeOp &&
+    funct7 === "b0000001".U && funct3(2)
+  val dividerStart = divideInstruction && !divider.io.busy && !divider.io.done &&
+    !loadUseHazard && !illegalTrap
+  val divideStall = divideInstruction && !divider.io.done
+  val pipelineStall = loadUseHazard || divideStall
+  io.pipelineStall := pipelineStall
+  divider.io.start := dividerStart
+  divider.io.signed := !funct3(0)
+  divider.io.dividend := rs1Value
+  divider.io.divisor := rs2Value
+
   val csrSource = Mux(funct3(2), Cat(0.U(27.W), rs1), rs1Value)
   val csrCommand = funct3(1, 0)
   val validCsrCommand = funct3 === "b001".U || funct3 === "b010".U ||
@@ -272,9 +283,6 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val unsignedProduct = rs1Value * rs2Value
   val signedProduct = rs1Value.asSInt * rs2Value.asSInt
   val signedUnsignedProduct = rs1Value.asSInt * Cat(0.U(1.W), rs2Value).asSInt
-  val signedDivideOverflow = rs1Value === "h80000000".U && rs2Value === "hffffffff".U
-  val signedQuotient = (rs1Value.asSInt / rs2Value.asSInt).asUInt
-  val signedRemainder = (rs1Value.asSInt % rs2Value.asSInt).asUInt
 
   switch(opcode) {
     is(OpcodeLui) {
@@ -435,26 +443,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
           is("b001".U) { result := signedProduct.asUInt(63, 32) } // MULH
           is("b010".U) { result := signedUnsignedProduct.asUInt(63, 32) } // MULHSU
           is("b011".U) { result := unsignedProduct(63, 32) } // MULHU
-          is("b100".U) { // DIV
-            result := Mux(
-              rs2Value === 0.U,
-              "hffffffff".U,
-              Mux(signedDivideOverflow, "h80000000".U, signedQuotient)
-            )
-          }
-          is("b101".U) { // DIVU
-            result := Mux(rs2Value === 0.U, "hffffffff".U, rs1Value / rs2Value)
-          }
-          is("b110".U) { // REM
-            result := Mux(
-              rs2Value === 0.U,
-              rs1Value,
-              Mux(signedDivideOverflow, 0.U, signedRemainder)
-            )
-          }
-          is("b111".U) { // REMU
-            result := Mux(rs2Value === 0.U, rs1Value, rs1Value % rs2Value)
-          }
+          is("b100".U) { result := divider.io.quotient } // DIV
+          is("b101".U) { result := divider.io.quotient } // DIVU
+          is("b110".U) { result := divider.io.remainder } // REM
+          is("b111".U) { result := divider.io.remainder } // REMU
         }
       }.otherwise {
         switch(funct3) {
@@ -509,8 +501,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
-  }.elsewhen(loadUseHazard) {
-    // Let the load retire, hold the consumer and fetch PC, and inject a bubble.
+  }.elsewhen(pipelineStall) {
+    // Let the older instruction retire, hold decode/fetch, and inject a bubble.
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
   }.otherwise {
     executeMemoryWriteback.valid := fetchDecodeExecute.valid
@@ -541,8 +533,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val legalCsrWrite = fetchDecodeExecute.valid && opcode === OpcodeSystem &&
     validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
-  val mretActive = fetchDecodeExecute.valid && isMret && !loadUseHazard && !illegalTrap
-  csrs.io.writeEnable := legalCsrWrite && !loadUseHazard && !illegalTrap
+  val mretActive = fetchDecodeExecute.valid && isMret && !pipelineStall && !illegalTrap
+  csrs.io.writeEnable := legalCsrWrite && !pipelineStall && !illegalTrap
   csrs.io.mret := mretActive
 
   val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
