@@ -3,10 +3,10 @@ package riscvai
 import chisel3._
 import chisel3.util._
 
-/** A small single-cycle RV32IM processor core.
+/** A small single-cycle RV32IMA processor core.
   *
   * Instruction and data memories are external and combinationally read. The
-  * core implements the RV32I integer instructions and the RV32M extension.
+  * core implements the RV32I integer instructions and the RV32M/A extensions.
   */
 class RiscVCore(resetVector: BigInt = 0) extends Module {
   val io = IO(new Bundle {
@@ -30,17 +30,32 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   private val OpcodeOpImm = "b0010011".U(7.W)
   private val OpcodeAuipc = "b0010111".U(7.W)
   private val OpcodeStore = "b0100011".U(7.W)
+  private val OpcodeAtomic = "b0101111".U(7.W)
   private val OpcodeOp = "b0110011".U(7.W)
   private val OpcodeLui = "b0110111".U(7.W)
   private val OpcodeBranch = "b1100011".U(7.W)
   private val OpcodeJalr = "b1100111".U(7.W)
   private val OpcodeJal = "b1101111".U(7.W)
 
+  private val AtomicAdd = "b00000".U(5.W)
+  private val AtomicSwap = "b00001".U(5.W)
+  private val AtomicLr = "b00010".U(5.W)
+  private val AtomicSc = "b00011".U(5.W)
+  private val AtomicXor = "b00100".U(5.W)
+  private val AtomicOr = "b01000".U(5.W)
+  private val AtomicMin = "b10000".U(5.W)
+  private val AtomicMax = "b10100".U(5.W)
+  private val AtomicMinU = "b11000".U(5.W)
+  private val AtomicMaxU = "b11100".U(5.W)
+  private val AtomicAnd = "b01100".U(5.W)
+
   private def signExtend(value: UInt, width: Int): UInt =
     Cat(Fill(32 - width, value(width - 1)), value)
 
   val pc = RegInit(resetVector.U(32.W))
   val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
+  val reservationValid = RegInit(false.B)
+  val reservationAddress = RegInit(0.U(32.W))
 
   val instruction = io.instruction
   val opcode = instruction(6, 0)
@@ -69,6 +84,9 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   val writeEnable = WireDefault(false.B)
   val writeData = WireDefault(0.U(32.W))
   val illegal = WireDefault(true.B)
+  val reservationSet = WireDefault(false.B)
+  val reservationClear = WireDefault(false.B)
+  val nextReservationAddress = WireDefault(0.U(32.W))
 
   val unsignedProduct = rs1Value * rs2Value
   val signedProduct = rs1Value.asSInt * rs2Value.asSInt
@@ -187,6 +205,59 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
         illegal := false.B
         io.dataWriteEnable := true.B
         io.dataWriteMask := (laneMask << address(1, 0))(3, 0)
+        reservationClear := true.B
+      }
+    }
+
+    is(OpcodeAtomic) {
+      val operation = instruction(31, 27)
+      val address = rs1Value
+      val validOperation = operation === AtomicAdd || operation === AtomicSwap ||
+        operation === AtomicLr || operation === AtomicSc || operation === AtomicXor ||
+        operation === AtomicAnd || operation === AtomicOr || operation === AtomicMin ||
+        operation === AtomicMax || operation === AtomicMinU || operation === AtomicMaxU
+      val validLr = operation =/= AtomicLr || rs2 === 0.U
+      val scSuccess = reservationValid && reservationAddress === address
+      val atomicWriteData = MuxLookup(operation, rs2Value)(Seq(
+        AtomicAdd -> (io.dataReadData + rs2Value),
+        AtomicSwap -> rs2Value,
+        AtomicXor -> (io.dataReadData ^ rs2Value),
+        AtomicAnd -> (io.dataReadData & rs2Value),
+        AtomicOr -> (io.dataReadData | rs2Value),
+        AtomicMin -> Mux(
+          io.dataReadData.asSInt < rs2Value.asSInt,
+          io.dataReadData,
+          rs2Value
+        ),
+        AtomicMax -> Mux(
+          io.dataReadData.asSInt > rs2Value.asSInt,
+          io.dataReadData,
+          rs2Value
+        ),
+        AtomicMinU -> Mux(io.dataReadData < rs2Value, io.dataReadData, rs2Value),
+        AtomicMaxU -> Mux(io.dataReadData > rs2Value, io.dataReadData, rs2Value)
+      ))
+
+      io.dataAddress := address
+      when(funct3 === "b010".U && address(1, 0) === 0.U && validOperation && validLr) {
+        illegal := false.B
+        writeEnable := true.B
+        io.dataWriteMask := "b1111".U
+        when(operation === AtomicLr) {
+          writeData := io.dataReadData
+          reservationSet := true.B
+          nextReservationAddress := address
+        }.elsewhen(operation === AtomicSc) {
+          writeData := Mux(scSuccess, 0.U, 1.U)
+          io.dataWriteData := rs2Value
+          io.dataWriteEnable := scSuccess
+          reservationClear := true.B
+        }.otherwise {
+          writeData := io.dataReadData
+          io.dataWriteData := atomicWriteData
+          io.dataWriteEnable := true.B
+          reservationClear := true.B
+        }
       }
     }
 
@@ -292,4 +363,11 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   }
   registers(0) := 0.U
   pc := nextPc
+
+  when(reservationClear) {
+    reservationValid := false.B
+  }.elsewhen(reservationSet) {
+    reservationValid := true.B
+    reservationAddress := nextReservationAddress
+  }
 }

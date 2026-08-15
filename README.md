@@ -60,6 +60,7 @@ The first milestone implements:
 - RV32I register-register ALU instructions
 - RV32I immediate ALU instructions
 - the complete RV32M multiply/divide extension
+- the complete RV32A word-atomic extension for a single hart
 - `LUI` and `AUIPC`
 - all six conditional branches
 - `JAL` and `JALR`
@@ -75,10 +76,14 @@ The current RV32M implementation is combinational. It provides architectural
 correctness for software testing; a multicycle multiply/divide unit can be added
 later to improve synthesis timing and area.
 
+RV32A reservations are local to the hart and are invalidated by local stores.
+Atomic read-modify-write operations assume this core is the only memory-bus
+master; multicore coherence and external reservation invalidation are out of
+scope.
+
 ## Next milestones
 
 - instruction and data-memory modules around the core
-- the RV32A atomic extension
 - a compliance-test runner using a RISC-V cross compiler
 - exceptions, CSRs, and the privileged execution environment
 - differential testing of the pipelined core against the single-cycle reference

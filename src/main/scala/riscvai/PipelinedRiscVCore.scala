@@ -21,10 +21,12 @@ private class ExecuteMemoryWriteback extends Bundle {
   val memoryRead = Bool()
   val memoryWrite = Bool()
   val memoryFunction = UInt(3.W)
+  val atomicValid = Bool()
+  val atomicOperation = UInt(5.W)
   val illegal = Bool()
 }
 
-/** A three-stage, single-issue RV32IM processor.
+/** A three-stage, single-issue RV32IMA processor.
   *
   * The stages are fetch, decode/execute, and memory/writeback. Results from the
   * final stage are forwarded to decode/execute. A load followed immediately by
@@ -57,11 +59,24 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   private val OpcodeOpImm = "b0010011".U(7.W)
   private val OpcodeAuipc = "b0010111".U(7.W)
   private val OpcodeStore = "b0100011".U(7.W)
+  private val OpcodeAtomic = "b0101111".U(7.W)
   private val OpcodeOp = "b0110011".U(7.W)
   private val OpcodeLui = "b0110111".U(7.W)
   private val OpcodeBranch = "b1100011".U(7.W)
   private val OpcodeJalr = "b1100111".U(7.W)
   private val OpcodeJal = "b1101111".U(7.W)
+
+  private val AtomicAdd = "b00000".U(5.W)
+  private val AtomicSwap = "b00001".U(5.W)
+  private val AtomicLr = "b00010".U(5.W)
+  private val AtomicSc = "b00011".U(5.W)
+  private val AtomicXor = "b00100".U(5.W)
+  private val AtomicOr = "b01000".U(5.W)
+  private val AtomicMin = "b10000".U(5.W)
+  private val AtomicMax = "b10100".U(5.W)
+  private val AtomicMinU = "b11000".U(5.W)
+  private val AtomicMaxU = "b11100".U(5.W)
+  private val AtomicAnd = "b01100".U(5.W)
 
   private def signExtend(value: UInt, width: Int): UInt =
     Cat(Fill(32 - width, value(width - 1)), value)
@@ -70,6 +85,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   private val fetchDecodeExecute = RegInit(0.U.asTypeOf(new FetchDecodeExecute))
   private val executeMemoryWriteback = RegInit(0.U.asTypeOf(new ExecuteMemoryWriteback))
   val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
+  val reservationValid = RegInit(false.B)
+  val reservationAddress = RegInit(0.U(32.W))
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
@@ -82,10 +99,12 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     "b100".U -> Cat(0.U(24.W), loadedByte),
     "b101".U -> Cat(0.U(16.W), loadedHalfword)
   ))
+  val scSuccess = reservationValid &&
+    reservationAddress === (executeMemoryWriteback.address & "hfffffffc".U)
   val writebackData = Mux(
-    executeMemoryWriteback.memoryRead,
-    loadData,
-    executeMemoryWriteback.result
+    executeMemoryWriteback.atomicValid && executeMemoryWriteback.atomicOperation === AtomicSc,
+    Mux(scSuccess, 0.U, 1.U),
+    Mux(executeMemoryWriteback.memoryRead, loadData, executeMemoryWriteback.result)
   )
   val writebackActive = executeMemoryWriteback.valid &&
     executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
@@ -103,17 +122,57 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     "b010".U -> 15.U(4.W)
   ))
   val shiftedStoreMask = (storeLaneMask << executeMemoryWriteback.address(1, 0))(3, 0)
+  val atomicWriteData = MuxLookup(
+    executeMemoryWriteback.atomicOperation,
+    executeMemoryWriteback.storeData
+  )(Seq(
+    AtomicAdd -> (io.dataReadData + executeMemoryWriteback.storeData),
+    AtomicSwap -> executeMemoryWriteback.storeData,
+    AtomicXor -> (io.dataReadData ^ executeMemoryWriteback.storeData),
+    AtomicAnd -> (io.dataReadData & executeMemoryWriteback.storeData),
+    AtomicOr -> (io.dataReadData | executeMemoryWriteback.storeData),
+    AtomicMin -> Mux(
+      io.dataReadData.asSInt < executeMemoryWriteback.storeData.asSInt,
+      io.dataReadData,
+      executeMemoryWriteback.storeData
+    ),
+    AtomicMax -> Mux(
+      io.dataReadData.asSInt > executeMemoryWriteback.storeData.asSInt,
+      io.dataReadData,
+      executeMemoryWriteback.storeData
+    ),
+    AtomicMinU -> Mux(
+      io.dataReadData < executeMemoryWriteback.storeData,
+      io.dataReadData,
+      executeMemoryWriteback.storeData
+    ),
+    AtomicMaxU -> Mux(
+      io.dataReadData > executeMemoryWriteback.storeData,
+      io.dataReadData,
+      executeMemoryWriteback.storeData
+    )
+  ))
+  val atomicStoreAllowed = !executeMemoryWriteback.atomicValid ||
+    executeMemoryWriteback.atomicOperation =/= AtomicSc || scSuccess
+  val dataWriteActive = executeMemoryWriteback.valid &&
+    executeMemoryWriteback.memoryWrite && !executeMemoryWriteback.illegal && atomicStoreAllowed
 
   io.dataAddress := executeMemoryWriteback.address & "hfffffffc".U
-  io.dataWriteData := executeMemoryWriteback.storeData << memoryByteShift
+  io.dataWriteData := Mux(
+    executeMemoryWriteback.atomicValid,
+    Mux(
+      executeMemoryWriteback.atomicOperation === AtomicSc,
+      executeMemoryWriteback.storeData,
+      atomicWriteData
+    ),
+    executeMemoryWriteback.storeData << memoryByteShift
+  )
   io.dataWriteMask := Mux(
-    executeMemoryWriteback.valid && executeMemoryWriteback.memoryWrite &&
-      !executeMemoryWriteback.illegal,
+    dataWriteActive,
     shiftedStoreMask,
     0.U
   )
-  io.dataWriteEnable := executeMemoryWriteback.valid &&
-    executeMemoryWriteback.memoryWrite && !executeMemoryWriteback.illegal
+  io.dataWriteEnable := dataWriteActive
   io.illegalInstruction := executeMemoryWriteback.valid && executeMemoryWriteback.illegal
   io.retiredValid := executeMemoryWriteback.valid
   io.retiredPc := executeMemoryWriteback.pc
@@ -134,8 +193,9 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val usesRs1 = opcode === OpcodeJalr || opcode === OpcodeBranch ||
     opcode === OpcodeLoad || opcode === OpcodeStore ||
-    opcode === OpcodeOpImm || opcode === OpcodeOp
-  val usesRs2 = opcode === OpcodeBranch || opcode === OpcodeStore || opcode === OpcodeOp
+    opcode === OpcodeOpImm || opcode === OpcodeOp || opcode === OpcodeAtomic
+  val usesRs2 = opcode === OpcodeBranch || opcode === OpcodeStore ||
+    opcode === OpcodeOp || opcode === OpcodeAtomic
 
   val loadUseHazard = fetchDecodeExecute.valid &&
     executeMemoryWriteback.valid && executeMemoryWriteback.memoryRead &&
@@ -177,6 +237,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val memoryRead = WireDefault(false.B)
   val memoryWrite = WireDefault(false.B)
   val memoryFunction = WireDefault(0.U(3.W))
+  val atomicValid = WireDefault(false.B)
+  val atomicOperation = WireDefault(0.U(5.W))
   val illegal = WireDefault(true.B)
   val redirect = WireDefault(false.B)
   val redirectTarget = WireDefault(0.U(32.W))
@@ -267,6 +329,25 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
         illegal := false.B
         memoryWrite := true.B
         memoryFunction := funct3
+      }
+    }
+
+    is(OpcodeAtomic) {
+      val operation = instruction(31, 27)
+      val validOperation = operation === AtomicAdd || operation === AtomicSwap ||
+        operation === AtomicLr || operation === AtomicSc || operation === AtomicXor ||
+        operation === AtomicAnd || operation === AtomicOr || operation === AtomicMin ||
+        operation === AtomicMax || operation === AtomicMinU || operation === AtomicMaxU
+      val validLr = operation =/= AtomicLr || rs2 === 0.U
+      address := rs1Value
+      when(funct3 === "b010".U && address(1, 0) === 0.U && validOperation && validLr) {
+        illegal := false.B
+        registerWrite := true.B
+        memoryRead := operation =/= AtomicSc
+        memoryWrite := operation =/= AtomicLr
+        memoryFunction := "b010".U
+        atomicValid := true.B
+        atomicOperation := operation
       }
     }
 
@@ -393,6 +474,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.memoryRead := memoryRead
     executeMemoryWriteback.memoryWrite := memoryWrite
     executeMemoryWriteback.memoryFunction := memoryFunction
+    executeMemoryWriteback.atomicValid := atomicValid
+    executeMemoryWriteback.atomicOperation := atomicOperation
     executeMemoryWriteback.illegal := illegal
 
     when(redirect && fetchDecodeExecute.valid && !illegal) {
@@ -404,5 +487,15 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       fetchDecodeExecute.instruction := io.instruction
       fetchPc := fetchPc + 4.U
     }
+  }
+
+  val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
+    !executeMemoryWriteback.illegal
+  when(io.dataWriteEnable ||
+    (retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicSc)) {
+    reservationValid := false.B
+  }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {
+    reservationValid := true.B
+    reservationAddress := executeMemoryWriteback.address & "hfffffffc".U
   }
 }

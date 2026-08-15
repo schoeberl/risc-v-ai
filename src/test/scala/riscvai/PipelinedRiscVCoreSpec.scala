@@ -22,6 +22,10 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private def uType(imm20: Int, rd: Int): BigInt =
     (bits(imm20, 20) << 12) | (BigInt(rd) << 7) | BigInt(0x37)
 
+  private def aType(funct5: Int, rs2: Int, rs1: Int, rd: Int): BigInt =
+    (BigInt(funct5) << 27) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
+      (BigInt(2) << 12) | (BigInt(rd) << 7) | BigInt(0x2f)
+
   private def sType(imm: Int, rs2: Int, rs1: Int, funct3: Int): BigInt = {
     val encoded = bits(imm, 12)
     ((encoded >> 5) << 25) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
@@ -211,6 +215,55 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         expectRegister(dut, 12, BigInt("fffffff9", 16))
         expectRegister(dut, 15, BigInt("80000000", 16))
         expectRegister(dut, 16, 0)
+      }
+    }
+
+    "executes single-hart RV32A atomics and tracks reservations" in {
+      simulate(new PipelinedRiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(0, 0, 0, 1),              // addi x1, x0, 0
+          BigInt(0x04) -> iType(5, 0, 0, 2),              // addi x2, x0, 5
+          BigInt(0x08) -> iType(-1, 0, 0, 3),             // addi x3, x0, -1
+          BigInt(0x0c) -> iType(9, 0, 0, 4),              // addi x4, x0, 9
+          BigInt(0x10) -> aType(0x00, 2, 1, 5),           // amoadd.w  x5, x2, (x1)
+          BigInt(0x14) -> aType(0x01, 2, 1, 6),           // amoswap.w x6, x2, (x1)
+          BigInt(0x18) -> aType(0x04, 2, 1, 7),           // amoxor.w  x7, x2, (x1)
+          BigInt(0x1c) -> aType(0x0c, 2, 1, 8),           // amoand.w  x8, x2, (x1)
+          BigInt(0x20) -> aType(0x08, 2, 1, 9),           // amoor.w   x9, x2, (x1)
+          BigInt(0x24) -> aType(0x10, 3, 1, 10),          // amomin.w  x10, x3, (x1)
+          BigInt(0x28) -> aType(0x14, 2, 1, 11),          // amomax.w  x11, x2, (x1)
+          BigInt(0x2c) -> aType(0x18, 3, 1, 12),          // amominu.w x12, x3, (x1)
+          BigInt(0x30) -> aType(0x1c, 3, 1, 13),          // amomaxu.w x13, x3, (x1)
+          BigInt(0x34) -> aType(0x02, 0, 1, 14),          // lr.w      x14, (x1)
+          BigInt(0x38) -> aType(0x03, 4, 1, 15),          // sc.w      x15, x4, (x1)
+          BigInt(0x3c) -> aType(0x03, 2, 1, 16),          // sc.w      x16, x2, (x1)
+          BigInt(0x40) -> aType(0x02, 0, 1, 17),          // lr.w      x17, (x1)
+          BigInt(0x44) -> sType(4, 2, 1, 2),              // sw        x2, 4(x1)
+          BigInt(0x48) -> aType(0x03, 4, 1, 18)           // sc.w      x18, x4, (x1)
+        )
+        val memory = collection.mutable.Map[BigInt, BigInt](BigInt(0) -> BigInt(10))
+
+        for (_ <- 0 until 28) {
+          runCycle(dut, program, memory)
+        }
+
+        expectRegister(dut, 5, 10)
+        expectRegister(dut, 6, 15)
+        expectRegister(dut, 7, 5)
+        expectRegister(dut, 8, 0)
+        expectRegister(dut, 9, 0)
+        expectRegister(dut, 10, 5)
+        expectRegister(dut, 11, BigInt("ffffffff", 16))
+        expectRegister(dut, 12, 5)
+        expectRegister(dut, 13, 5)
+        expectRegister(dut, 14, BigInt("ffffffff", 16))
+        expectRegister(dut, 15, 0)
+        expectRegister(dut, 16, 1)
+        expectRegister(dut, 17, 9)
+        expectRegister(dut, 18, 1)
+        memory(0) mustBe 9
+        memory(4) mustBe 5
       }
     }
   }
