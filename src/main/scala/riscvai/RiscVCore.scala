@@ -67,6 +67,7 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   val rs1 = instruction(19, 15)
   val rs2 = instruction(24, 20)
   val funct7 = instruction(31, 25)
+  val isMret = instruction === "h30200073".U
 
   val rs1Value = Mux(rs1 === 0.U, 0.U, registers(rs1))
   val rs2Value = Mux(rs2 === 0.U, 0.U, registers(rs2))
@@ -288,7 +289,10 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
     is(OpcodeSystem) {
       val legalCsrAccess = validCsrCommand && csrs.io.readValid &&
         (!csrWriteRequested || csrs.io.writeAllowed)
-      when(legalCsrAccess) {
+      when(isMret) {
+        illegal := false.B
+        nextPc := csrs.io.mretPc
+      }.elsewhen(legalCsrAccess) {
         illegal := false.B
         writeEnable := true.B
         writeData := csrs.io.readData
@@ -396,12 +400,19 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
     registers(rd) := writeData
   }
   registers(0) := 0.U
-  pc := nextPc
+  val illegalTrap = !reset.asBool && illegal
+  val mretActive = !reset.asBool && isMret && !illegal
+  pc := Mux(illegalTrap, csrs.io.trapVector, nextPc)
   csrs.io.writeEnable := opcode === OpcodeSystem && validCsrCommand &&
-    csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
+    csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested && !illegalTrap
   csrs.io.retired := !reset.asBool && !illegal
+  csrs.io.trapEnter := illegalTrap
+  csrs.io.trapPc := pc
+  csrs.io.trapCause := 2.U // Illegal instruction
+  csrs.io.trapValue := instruction
+  csrs.io.mret := mretActive
 
-  when(reservationClear) {
+  when(illegalTrap || mretActive || reservationClear) {
     reservationValid := false.B
   }.elsewhen(reservationSet) {
     reservationValid := true.B

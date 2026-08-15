@@ -17,6 +17,15 @@ private class MachineCsrs(hartId: BigInt = 0) extends Module {
     val writeEnable = Input(Bool())
     val writeData = Input(UInt(32.W))
     val retired = Input(Bool())
+
+    val trapEnter = Input(Bool())
+    val trapPc = Input(UInt(32.W))
+    val trapCause = Input(UInt(32.W))
+    val trapValue = Input(UInt(32.W))
+    val trapVector = Output(UInt(32.W))
+
+    val mret = Input(Bool())
+    val mretPc = Output(UInt(32.W))
   })
 
   private val MisaValue = "h40001101".U(32.W) // RV32IMA
@@ -41,6 +50,8 @@ private class MachineCsrs(hartId: BigInt = 0) extends Module {
   }
 
   io.readData := 0.U
+  io.trapVector := mtvec & "hfffffffc".U
+  io.mretPc := mepc
   private val readableAddresses = Seq(
     0x300, 0x301, 0x304, 0x305, 0x306,
     0x340, 0x341, 0x342, 0x343, 0x344,
@@ -103,5 +114,20 @@ private class MachineCsrs(hartId: BigInt = 0) extends Module {
       is("hb80".U) { cycleCounter := Cat(io.writeData, cycleCounter(31, 0)) }
       is("hb82".U) { retiredCounter := Cat(io.writeData, retiredCounter(31, 0)) }
     }
+  }
+
+  when(io.mret) {
+    // This milestone supports M-mode only, so MPP remains M after MRET.
+    mstatus := (mstatus & "hffffe777".U) |
+      "h00001880".U | Cat(0.U(28.W), mstatus(7), 0.U(3.W))
+  }
+
+  when(io.trapEnter) {
+    mepc := io.trapPc & "hfffffffc".U
+    mcause := io.trapCause
+    mtval := io.trapValue
+    // Save MIE in MPIE, disable MIE, and record M-mode in MPP.
+    mstatus := (mstatus & "hffffe777".U) |
+      "h00001800".U | Cat(0.U(24.W), mstatus(3), 0.U(7.W))
   }
 }

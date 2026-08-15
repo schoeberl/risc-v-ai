@@ -346,5 +346,40 @@ class RiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         expectRegister(dut, 14, 31)
       }
     }
+
+    "takes a precise illegal-instruction trap and returns with MRET" in {
+      simulate(new RiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(0x40, 0, 0, 1),          // addi x1, x0, 0x40
+          BigInt(0x04) -> csrType(0x305, 1, 1, 0),       // csrw mtvec, x1
+          BigInt(0x08) -> BigInt("ffffffff", 16),        // illegal instruction
+          BigInt(0x0c) -> iType(7, 0, 0, 2),             // addi x2, x0, 7
+          BigInt(0x10) -> csrType(0x300, 0, 2, 6),       // csrr x6, mstatus
+          BigInt(0x40) -> csrType(0x342, 0, 2, 3),       // csrr x3, mcause
+          BigInt(0x44) -> csrType(0x341, 0, 2, 4),       // csrr x4, mepc
+          BigInt(0x48) -> csrType(0x343, 0, 2, 5),       // csrr x5, mtval
+          BigInt(0x4c) -> iType(4, 4, 0, 4),             // addi x4, x4, 4
+          BigInt(0x50) -> csrType(0x341, 4, 1, 0),       // csrw mepc, x4
+          BigInt(0x54) -> BigInt("30200073", 16)         // mret
+        )
+        var traps = 0
+
+        for (_ <- 0 until 16) {
+          val pc = dut.io.instructionAddress.peek().litValue
+          dut.io.instruction.poke(program.getOrElse(pc, Nop).U)
+          dut.io.dataReadData.poke(0.U)
+          if (dut.io.illegalInstruction.peek().litToBoolean) traps += 1
+          dut.clock.step()
+        }
+
+        traps mustBe 1
+        expectRegister(dut, 2, 7)
+        expectRegister(dut, 3, 2)
+        expectRegister(dut, 4, 12)
+        expectRegister(dut, 5, BigInt("ffffffff", 16))
+        expectRegister(dut, 6, BigInt("00001880", 16))
+      }
+    }
   }
 }

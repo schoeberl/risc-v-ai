@@ -90,6 +90,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val reservationValid = RegInit(false.B)
   val reservationAddress = RegInit(0.U(32.W))
   private val csrs = Module(new MachineCsrs)
+  val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
@@ -176,8 +177,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     0.U
   )
   io.dataWriteEnable := dataWriteActive
-  io.illegalInstruction := executeMemoryWriteback.valid && executeMemoryWriteback.illegal
-  io.retiredValid := executeMemoryWriteback.valid
+  io.illegalInstruction := illegalTrap
+  io.retiredValid := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal
   io.retiredPc := executeMemoryWriteback.pc
   io.retiredInstruction := executeMemoryWriteback.instruction
   io.debugRegisterData := Mux(
@@ -193,6 +194,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val rs1 = instruction(19, 15)
   val rs2 = instruction(24, 20)
   val funct7 = instruction(31, 25)
+  val isMret = instruction === "h30200073".U
 
   val usesRs1 = opcode === OpcodeJalr || opcode === OpcodeBranch ||
     opcode === OpcodeLoad || opcode === OpcodeStore ||
@@ -237,6 +239,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   csrs.io.address := instruction(31, 20)
   csrs.io.writeData := csrWriteData
   csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal
+  csrs.io.trapEnter := illegalTrap
+  csrs.io.trapPc := executeMemoryWriteback.pc
+  csrs.io.trapCause := 2.U // Illegal instruction
+  csrs.io.trapValue := executeMemoryWriteback.instruction
 
   val immediateI = signExtend(instruction(31, 20), 12)
   val immediateS = signExtend(Cat(instruction(31, 25), instruction(11, 7)), 12)
@@ -380,7 +386,11 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     is(OpcodeSystem) {
       val legalCsrAccess = validCsrCommand && csrs.io.readValid &&
         (!csrWriteRequested || csrs.io.writeAllowed)
-      when(legalCsrAccess) {
+      when(isMret) {
+        illegal := false.B
+        redirect := true.B
+        redirectTarget := csrs.io.mretPc
+      }.elsewhen(legalCsrAccess) {
         illegal := false.B
         registerWrite := true.B
         result := csrs.io.readData
@@ -495,7 +505,11 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     }
   }
 
-  when(loadUseHazard) {
+  when(illegalTrap) {
+    executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    fetchDecodeExecute.valid := false.B
+    fetchPc := csrs.io.trapVector
+  }.elsewhen(loadUseHazard) {
     // Let the load retire, hold the consumer and fetch PC, and inject a bubble.
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
   }.otherwise {
@@ -527,11 +541,13 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val legalCsrWrite = fetchDecodeExecute.valid && opcode === OpcodeSystem &&
     validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
-  csrs.io.writeEnable := legalCsrWrite && !loadUseHazard
+  val mretActive = fetchDecodeExecute.valid && isMret && !loadUseHazard && !illegalTrap
+  csrs.io.writeEnable := legalCsrWrite && !loadUseHazard && !illegalTrap
+  csrs.io.mret := mretActive
 
   val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
     !executeMemoryWriteback.illegal
-  when(io.dataWriteEnable ||
+  when(illegalTrap || mretActive || io.dataWriteEnable ||
     (retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicSc)) {
     reservationValid := false.B
   }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {

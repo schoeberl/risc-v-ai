@@ -66,6 +66,8 @@ The first milestone implements:
 - the machine CSR foundation: `mstatus`, `misa`, `mie`, `mtvec`, `mcounteren`,
   `mscratch`, `mepc`, `mcause`, `mtval`, `mip`, hart identification, and RV32
   cycle/time/retired counters
+- precise illegal-instruction traps into direct-mode `mtvec`, including
+  `mepc`, `mcause`, `mtval`, `mstatus` updates, pipeline flushing, and `MRET`
 - `LUI` and `AUIPC`
 - all six conditional branches
 - `JAL` and `JALR`
@@ -75,7 +77,8 @@ The first milestone implements:
 - a read-only register debug port
 
 Tests execute small machine-code programs and verify arithmetic, the hardwired
-zero register, control flow, return addresses, and memory traffic.
+zero register, control flow, return addresses, memory traffic, and trap/return
+behavior.
 
 The current RV32M implementation is combinational. It provides architectural
 correctness for software testing; a multicycle multiply/divide unit can be added
@@ -86,15 +89,18 @@ Atomic read-modify-write operations assume this core is the only memory-bus
 master; multicore coherence and external reservation invalidation are out of
 scope.
 
-The CSR bank provides software-visible state but does not yet perform trap
-entry, `MRET`, privilege transitions, or connect live interrupt sources. Until
-a platform timer is added, the `time` CSR aliases the cycle counter.
+The CSR bank now supports the first precise exception path: illegal instructions
+trap to direct-mode `mtvec`, and an M-mode handler can resume with `MRET`. The
+core still runs only in M-mode; it does not yet implement user-mode privilege,
+`ECALL`/`EBREAK`, memory-access faults, or live interrupt sources. Until a
+platform timer is added, the `time` CSR aliases the cycle counter.
 
 ## Next milestones
 
 - instruction and data-memory modules around the core
 - a compliance-test runner using a RISC-V cross compiler
-- exceptions, CSRs, and the privileged execution environment
+- the remaining synchronous exceptions, beginning with `ECALL` and `EBREAK`
+- user-mode privilege and the platform interrupt/timer path
 - differential testing of the pipelined core against the single-cycle reference
 
 The original `riscvai.Adder` remains as a minimal Chisel example.
