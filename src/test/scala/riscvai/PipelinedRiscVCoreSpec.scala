@@ -250,6 +250,32 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
       }
     }
 
+    "pipelines multiplication across four stages and forwards the completed result" in {
+      simulate(new PipelinedRiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(-7, 0, 0, 1),             // addi x1, x0, -7
+          BigInt(0x04) -> iType(3, 0, 0, 2),              // addi x2, x0, 3
+          BigInt(0x08) -> rType(1, 2, 1, 0, 3),           // mul  x3, x1, x2
+          BigInt(0x0c) -> iType(1, 3, 0, 4),              // addi x4, x3, 1
+          BigInt(0x10) -> rType(1, 2, 1, 1, 5),           // mulh x5, x1, x2
+          BigInt(0x14) -> iType(1, 5, 0, 6)               // addi x6, x5, 1
+        )
+        val memory = collection.mutable.Map.empty[BigInt, BigInt]
+        var multiplierStalls = 0
+
+        for (_ <- 0 until 30) {
+          if (runCycle(dut, program, memory)) multiplierStalls += 1
+        }
+
+        multiplierStalls mustBe 8
+        expectRegister(dut, 3, BigInt("ffffffeb", 16))
+        expectRegister(dut, 4, BigInt("ffffffec", 16))
+        expectRegister(dut, 5, BigInt("ffffffff", 16))
+        expectRegister(dut, 6, 0)
+      }
+    }
+
     "executes single-hart RV32A atomics and tracks reservations" in {
       simulate(new PipelinedRiscVCore) { dut =>
         initialize(dut)

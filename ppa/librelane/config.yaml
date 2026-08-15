@@ -2,6 +2,7 @@ DESIGN_NAME: PipelinedRiscVCore
 VERILOG_FILES:
   - dir::../../generated/IterativeDivider.sv
   - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
   - dir::../../generated/PipelinedRiscVCore.sv
 
 CLOCK_PORT: clock

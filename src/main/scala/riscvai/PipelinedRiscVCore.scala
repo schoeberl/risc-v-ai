@@ -91,6 +91,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val reservationAddress = RegInit(0.U(32.W))
   private val csrs = Module(new MachineCsrs)
   private val divider = Module(new IterativeDivider)
+  private val multiplier = Module(new PipelinedMultiplier)
   val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
@@ -224,15 +225,25 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val rs2Value = readRegister(rs2)
   val divideInstruction = fetchDecodeExecute.valid && opcode === OpcodeOp &&
     funct7 === "b0000001".U && funct3(2)
+  val multiplyInstruction = fetchDecodeExecute.valid && opcode === OpcodeOp &&
+    funct7 === "b0000001".U && !funct3(2)
   val dividerStart = divideInstruction && !divider.io.busy && !divider.io.done &&
     !loadUseHazard && !illegalTrap
+  val multiplierStart = multiplyInstruction && !multiplier.io.busy && !multiplier.io.done &&
+    !loadUseHazard && !illegalTrap
   val divideStall = divideInstruction && !divider.io.done
-  val pipelineStall = loadUseHazard || divideStall
+  val multiplyStall = multiplyInstruction && !multiplier.io.done
+  val pipelineStall = loadUseHazard || divideStall || multiplyStall
   io.pipelineStall := pipelineStall
   divider.io.start := dividerStart
   divider.io.signed := !funct3(0)
   divider.io.dividend := rs1Value
   divider.io.divisor := rs2Value
+  multiplier.io.start := multiplierStart
+  multiplier.io.lhsSigned := funct3 === "b001".U || funct3 === "b010".U
+  multiplier.io.rhsSigned := funct3 === "b001".U
+  multiplier.io.lhs := rs1Value
+  multiplier.io.rhs := rs2Value
 
   val csrSource = Mux(funct3(2), Cat(0.U(27.W), rs1), rs1Value)
   val csrCommand = funct3(1, 0)
@@ -279,10 +290,6 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val illegal = WireDefault(true.B)
   val redirect = WireDefault(false.B)
   val redirectTarget = WireDefault(0.U(32.W))
-
-  val unsignedProduct = rs1Value * rs2Value
-  val signedProduct = rs1Value.asSInt * rs2Value.asSInt
-  val signedUnsignedProduct = rs1Value.asSInt * Cat(0.U(1.W), rs2Value).asSInt
 
   switch(opcode) {
     is(OpcodeLui) {
@@ -439,10 +446,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       registerWrite := true.B
       when(funct7 === "b0000001".U) {
         switch(funct3) {
-          is("b000".U) { result := unsignedProduct(31, 0) } // MUL
-          is("b001".U) { result := signedProduct.asUInt(63, 32) } // MULH
-          is("b010".U) { result := signedUnsignedProduct.asUInt(63, 32) } // MULHSU
-          is("b011".U) { result := unsignedProduct(63, 32) } // MULHU
+          is("b000".U) { result := multiplier.io.product(31, 0) } // MUL
+          is("b001".U) { result := multiplier.io.product(63, 32) } // MULH
+          is("b010".U) { result := multiplier.io.product(63, 32) } // MULHSU
+          is("b011".U) { result := multiplier.io.product(63, 32) } // MULHU
           is("b100".U) { result := divider.io.quotient } // DIV
           is("b101".U) { result := divider.io.quotient } // DIVU
           is("b110".U) { result := divider.io.remainder } // REM

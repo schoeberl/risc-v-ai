@@ -81,9 +81,10 @@ zero register, control flow, return addresses, memory traffic, and trap/return
 behavior.
 
 The pipelined core uses a shared 32-cycle iterative divider for `DIV`, `DIVU`,
-`REM`, and `REMU`; the pipeline stalls until its quotient and remainder are
-ready. Multiplication remains combinational. The single-cycle reference core
-keeps combinational RV32M operations for straightforward architectural checking.
+`REM`, and `REMU`, plus a shared four-stage multiplier for `MUL`, `MULH`,
+`MULHSU`, and `MULHU`. The pipeline stalls until each multicycle result is ready.
+The single-cycle reference core keeps combinational RV32M operations for
+straightforward architectural checking.
 
 RV32A reservations are local to the hart and are invalidated by local stores.
 Atomic read-modify-write operations assume this core is the only memory-bus
