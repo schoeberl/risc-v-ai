@@ -61,6 +61,11 @@ The first milestone implements:
 - RV32I immediate ALU instructions
 - the complete RV32M multiply/divide extension
 - the complete RV32A word-atomic extension for a single hart
+- `FENCE` and `FENCE.I` as legal no-ops for the uncached single-hart memory system
+- all six Zicsr read/modify/write instruction forms
+- the machine CSR foundation: `mstatus`, `misa`, `mie`, `mtvec`, `mcounteren`,
+  `mscratch`, `mepc`, `mcause`, `mtval`, `mip`, hart identification, and RV32
+  cycle/time/retired counters
 - `LUI` and `AUIPC`
 - all six conditional branches
 - `JAL` and `JALR`
@@ -80,6 +85,10 @@ RV32A reservations are local to the hart and are invalidated by local stores.
 Atomic read-modify-write operations assume this core is the only memory-bus
 master; multicore coherence and external reservation invalidation are out of
 scope.
+
+The CSR bank provides software-visible state but does not yet perform trap
+entry, `MRET`, privilege transitions, or connect live interrupt sources. Until
+a platform timer is added, the `time` CSR aliases the cycle counter.
 
 ## Next milestones
 

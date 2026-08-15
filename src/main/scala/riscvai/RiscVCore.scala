@@ -3,7 +3,7 @@ package riscvai
 import chisel3._
 import chisel3.util._
 
-/** A small single-cycle RV32IMA processor core.
+/** A small single-cycle RV32IMA_Zicsr_Zifencei processor core.
   *
   * Instruction and data memories are external and combinationally read. The
   * core implements the RV32I integer instructions and the RV32M/A extensions.
@@ -27,6 +27,7 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   })
 
   private val OpcodeLoad = "b0000011".U(7.W)
+  private val OpcodeMiscMem = "b0001111".U(7.W)
   private val OpcodeOpImm = "b0010011".U(7.W)
   private val OpcodeAuipc = "b0010111".U(7.W)
   private val OpcodeStore = "b0100011".U(7.W)
@@ -36,6 +37,7 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   private val OpcodeBranch = "b1100011".U(7.W)
   private val OpcodeJalr = "b1100111".U(7.W)
   private val OpcodeJal = "b1101111".U(7.W)
+  private val OpcodeSystem = "b1110011".U(7.W)
 
   private val AtomicAdd = "b00000".U(5.W)
   private val AtomicSwap = "b00001".U(5.W)
@@ -56,6 +58,7 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
   val reservationValid = RegInit(false.B)
   val reservationAddress = RegInit(0.U(32.W))
+  private val csrs = Module(new MachineCsrs)
 
   val instruction = io.instruction
   val opcode = instruction(6, 0)
@@ -67,6 +70,21 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
 
   val rs1Value = Mux(rs1 === 0.U, 0.U, registers(rs1))
   val rs2Value = Mux(rs2 === 0.U, 0.U, registers(rs2))
+  val csrSource = Mux(funct3(2), Cat(0.U(27.W), rs1), rs1Value)
+  val csrCommand = funct3(1, 0)
+  val validCsrCommand = funct3 === "b001".U || funct3 === "b010".U ||
+    funct3 === "b011".U || funct3 === "b101".U ||
+    funct3 === "b110".U || funct3 === "b111".U
+  val csrWriteRequested = validCsrCommand &&
+    (csrCommand === 1.U || ((csrCommand === 2.U || csrCommand === 3.U) && csrSource =/= 0.U))
+  val csrWriteData = MuxLookup(csrCommand, csrSource)(Seq(
+    1.U -> csrSource,
+    2.U -> (csrs.io.readData | csrSource),
+    3.U -> (csrs.io.readData & ~csrSource)
+  ))
+
+  csrs.io.address := instruction(31, 20)
+  csrs.io.writeData := csrWriteData
 
   val immediateI = signExtend(instruction(31, 20), 12)
   val immediateS = signExtend(Cat(instruction(31, 25), instruction(11, 7)), 12)
@@ -112,6 +130,12 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
       illegal := false.B
       writeEnable := true.B
       writeData := immediateU
+    }
+
+    is(OpcodeMiscMem) {
+      when(funct3 === "b000".U || funct3 === "b001".U) {
+        illegal := false.B // FENCE and FENCE.I are no-ops in this uncached single-hart core.
+      }
     }
 
     is(OpcodeAuipc) {
@@ -261,6 +285,16 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
       }
     }
 
+    is(OpcodeSystem) {
+      val legalCsrAccess = validCsrCommand && csrs.io.readValid &&
+        (!csrWriteRequested || csrs.io.writeAllowed)
+      when(legalCsrAccess) {
+        illegal := false.B
+        writeEnable := true.B
+        writeData := csrs.io.readData
+      }
+    }
+
     is(OpcodeOpImm) {
       illegal := false.B
       writeEnable := true.B
@@ -363,6 +397,9 @@ class RiscVCore(resetVector: BigInt = 0) extends Module {
   }
   registers(0) := 0.U
   pc := nextPc
+  csrs.io.writeEnable := opcode === OpcodeSystem && validCsrCommand &&
+    csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
+  csrs.io.retired := !reset.asBool && !illegal
 
   when(reservationClear) {
     reservationValid := false.B

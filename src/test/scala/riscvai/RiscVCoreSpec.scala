@@ -26,6 +26,10 @@ class RiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     (BigInt(funct5) << 27) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
       (BigInt(2) << 12) | (BigInt(rd) << 7) | BigInt(0x2f)
 
+  private def csrType(csr: Int, source: Int, funct3: Int, rd: Int): BigInt =
+    (BigInt(csr) << 20) | (BigInt(source) << 15) | (BigInt(funct3) << 12) |
+      (BigInt(rd) << 7) | BigInt(0x73)
+
   private def sType(imm: Int, rs2: Int, rs1: Int, funct3: Int): BigInt = {
     val encoded = bits(imm, 12)
     ((encoded >> 5) << 25) | (BigInt(rs2) << 20) | (BigInt(rs1) << 15) |
@@ -301,6 +305,45 @@ class RiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         expectRegister(dut, 18, 1)
         memory(0) mustBe 9
         memory(4) mustBe 5
+      }
+    }
+
+    "executes fences and all CSR instruction forms" in {
+      simulate(new RiscVCore) { dut =>
+        initialize(dut)
+        val program = Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(0x88, 0, 0, 1),          // addi   x1, x0, 0x88
+          BigInt(0x04) -> csrType(0x300, 1, 1, 2),       // csrrw  x2, mstatus, x1
+          BigInt(0x08) -> csrType(0x300, 0, 2, 3),       // csrrs  x3, mstatus, x0
+          BigInt(0x0c) -> csrType(0x300, 8, 7, 4),       // csrrci x4, mstatus, 8
+          BigInt(0x10) -> csrType(0x300, 0, 2, 5),       // csrrs  x5, mstatus, x0
+          BigInt(0x14) -> csrType(0x340, 31, 5, 6),      // csrrwi x6, mscratch, 31
+          BigInt(0x18) -> csrType(0x340, 0, 2, 7),       // csrrs  x7, mscratch, x0
+          BigInt(0x1c) -> BigInt("0000000f", 16),        // fence
+          BigInt(0x20) -> BigInt("0000100f", 16),        // fence.i
+          BigInt(0x24) -> iType(1, 0, 0, 8),             // addi   x8, x0, 1
+          BigInt(0x28) -> csrType(0x301, 0, 2, 9),       // csrrs  x9, misa, x0
+          BigInt(0x2c) -> csrType(0xf14, 0, 2, 10),      // csrrs  x10, mhartid, x0
+          BigInt(0x30) -> iType(1, 0, 0, 11),            // addi   x11, x0, 1
+          BigInt(0x34) -> csrType(0x340, 11, 3, 12),     // csrrc  x12, mscratch, x11
+          BigInt(0x38) -> csrType(0x340, 1, 6, 13),      // csrrsi x13, mscratch, 1
+          BigInt(0x3c) -> csrType(0x340, 0, 2, 14)       // csrrs  x14, mscratch, x0
+        )
+
+        runProgram(dut, program, cycles = program.size)
+
+        expectRegister(dut, 2, 0)
+        expectRegister(dut, 3, 0x88)
+        expectRegister(dut, 4, 0x88)
+        expectRegister(dut, 5, 0x80)
+        expectRegister(dut, 6, 0)
+        expectRegister(dut, 7, 31)
+        expectRegister(dut, 8, 1)
+        expectRegister(dut, 9, BigInt("40001101", 16))
+        expectRegister(dut, 10, 0)
+        expectRegister(dut, 12, 31)
+        expectRegister(dut, 13, 30)
+        expectRegister(dut, 14, 31)
       }
     }
   }

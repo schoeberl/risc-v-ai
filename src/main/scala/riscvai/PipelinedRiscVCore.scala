@@ -26,7 +26,7 @@ private class ExecuteMemoryWriteback extends Bundle {
   val illegal = Bool()
 }
 
-/** A three-stage, single-issue RV32IMA processor.
+/** A three-stage, single-issue RV32IMA_Zicsr_Zifencei processor.
   *
   * The stages are fetch, decode/execute, and memory/writeback. Results from the
   * final stage are forwarded to decode/execute. A load followed immediately by
@@ -56,6 +56,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   })
 
   private val OpcodeLoad = "b0000011".U(7.W)
+  private val OpcodeMiscMem = "b0001111".U(7.W)
   private val OpcodeOpImm = "b0010011".U(7.W)
   private val OpcodeAuipc = "b0010111".U(7.W)
   private val OpcodeStore = "b0100011".U(7.W)
@@ -65,6 +66,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   private val OpcodeBranch = "b1100011".U(7.W)
   private val OpcodeJalr = "b1100111".U(7.W)
   private val OpcodeJal = "b1101111".U(7.W)
+  private val OpcodeSystem = "b1110011".U(7.W)
 
   private val AtomicAdd = "b00000".U(5.W)
   private val AtomicSwap = "b00001".U(5.W)
@@ -87,6 +89,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
   val reservationValid = RegInit(false.B)
   val reservationAddress = RegInit(0.U(32.W))
+  private val csrs = Module(new MachineCsrs)
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
@@ -193,7 +196,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val usesRs1 = opcode === OpcodeJalr || opcode === OpcodeBranch ||
     opcode === OpcodeLoad || opcode === OpcodeStore ||
-    opcode === OpcodeOpImm || opcode === OpcodeOp || opcode === OpcodeAtomic
+    opcode === OpcodeOpImm || opcode === OpcodeOp || opcode === OpcodeAtomic ||
+    (opcode === OpcodeSystem && !funct3(2) && funct3 =/= 0.U)
   val usesRs2 = opcode === OpcodeBranch || opcode === OpcodeStore ||
     opcode === OpcodeOp || opcode === OpcodeAtomic
 
@@ -217,6 +221,22 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val rs1Value = readRegister(rs1)
   val rs2Value = readRegister(rs2)
+  val csrSource = Mux(funct3(2), Cat(0.U(27.W), rs1), rs1Value)
+  val csrCommand = funct3(1, 0)
+  val validCsrCommand = funct3 === "b001".U || funct3 === "b010".U ||
+    funct3 === "b011".U || funct3 === "b101".U ||
+    funct3 === "b110".U || funct3 === "b111".U
+  val csrWriteRequested = validCsrCommand &&
+    (csrCommand === 1.U || ((csrCommand === 2.U || csrCommand === 3.U) && csrSource =/= 0.U))
+  val csrWriteData = MuxLookup(csrCommand, csrSource)(Seq(
+    1.U -> csrSource,
+    2.U -> (csrs.io.readData | csrSource),
+    3.U -> (csrs.io.readData & ~csrSource)
+  ))
+
+  csrs.io.address := instruction(31, 20)
+  csrs.io.writeData := csrWriteData
+  csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal
 
   val immediateI = signExtend(instruction(31, 20), 12)
   val immediateS = signExtend(Cat(instruction(31, 25), instruction(11, 7)), 12)
@@ -255,6 +275,12 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       illegal := false.B
       registerWrite := true.B
       result := immediateU
+    }
+
+    is(OpcodeMiscMem) {
+      when(funct3 === "b000".U || funct3 === "b001".U) {
+        illegal := false.B // FENCE and FENCE.I are no-ops in this uncached single-hart core.
+      }
     }
 
     is(OpcodeAuipc) {
@@ -348,6 +374,16 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
         memoryFunction := "b010".U
         atomicValid := true.B
         atomicOperation := operation
+      }
+    }
+
+    is(OpcodeSystem) {
+      val legalCsrAccess = validCsrCommand && csrs.io.readValid &&
+        (!csrWriteRequested || csrs.io.writeAllowed)
+      when(legalCsrAccess) {
+        illegal := false.B
+        registerWrite := true.B
+        result := csrs.io.readData
       }
     }
 
@@ -488,6 +524,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       fetchPc := fetchPc + 4.U
     }
   }
+
+  val legalCsrWrite = fetchDecodeExecute.valid && opcode === OpcodeSystem &&
+    validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
+  csrs.io.writeEnable := legalCsrWrite && !loadUseHazard
 
   val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
     !executeMemoryWriteback.illegal
