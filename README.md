@@ -169,6 +169,11 @@ directory name below `ppa/librelane/runs/`.
 - `registered-atomic-state-control-100mhz` — experimental removal of the AMO
   operation decode from retirement control, later reverted: WNS -5.746 ns,
   estimated Fmax 63.51 MHz.
+- `no-a-extension-100mhz` — experimental removal of RV32A, later reverted: WNS
+  -3.146 ns, estimated Fmax 76.07 MHz, 248,441 µm² of standard cells, and
+  21.693 mW. Area and power improved, but timing regressed from the 78.42 MHz
+  baseline; the critical path moved to the execute-result/decode-forwarding
+  network.
 
 The commit IDs in parentheses identify published source checkpoints. After
 checking one out, generate its RTL and run the same checked-in LibreLane config;
