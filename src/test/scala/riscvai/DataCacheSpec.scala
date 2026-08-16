@@ -1,0 +1,77 @@
+package riscvai
+
+import chisel3._
+import chisel3.simulator.scalatest.ChiselSim
+import org.scalatest.freespec.AnyFreeSpec
+
+class DataCacheSpec extends AnyFreeSpec with ChiselSim {
+  "DataCache should complete consecutive read hits without a stall cycle" in {
+    simulate(new DataCache(cacheBytes = 256, lineBytes = 16)) { dut =>
+      val words = Seq(
+        BigInt("11111111", 16),
+        BigInt("22222222", 16),
+        BigInt("33333333", 16),
+        BigInt("44444444", 16)
+      )
+
+      dut.io.cpuRequest.poke(false.B)
+      dut.io.cpuRead.poke(false.B)
+      dut.io.cpuWrite.poke(false.B)
+      dut.io.cpuAddress.poke(0.U)
+      dut.io.cpuNextAddress.poke(0.U)
+      dut.io.cpuTagNextAddress.poke(0.U)
+      dut.io.cpuWriteData.poke(0.U)
+      dut.io.cpuWriteMask.poke(0.U)
+      dut.io.cpuAccept.poke(false.B)
+      dut.io.memory.ready.poke(false.B)
+      dut.io.memory.readData.poke(0.U)
+      dut.reset.poke(true.B)
+      dut.clock.step()
+      dut.reset.poke(false.B)
+
+      // Launch the first lookup after priming the synchronous memories.
+      dut.io.cpuNextAddress.poke(0.U)
+      dut.io.cpuTagNextAddress.poke(0.U)
+      dut.clock.step()
+      dut.io.cpuRequest.poke(true.B)
+      dut.io.cpuRead.poke(true.B)
+      dut.io.cpuAddress.poke(0.U)
+      dut.clock.step()
+
+      // Refill the missed line one word per cycle.
+      for (word <- words.indices) {
+        dut.io.memory.request.expect(true.B)
+        dut.io.memory.write.expect(false.B)
+        dut.io.memory.address.expect((word * 4).U)
+        dut.io.memory.readData.poke(words(word).U)
+        dut.io.memory.ready.poke(true.B)
+        dut.clock.step()
+      }
+      dut.io.memory.ready.poke(false.B)
+
+      // The post-refill prime cycle aligns the held request with both memories.
+      dut.clock.step()
+      dut.io.cpuReady.expect(true.B)
+      dut.io.cpuReadData.expect(words.head.U)
+
+      // Each accepted hit also clocks the following address into the SRAMs.
+      dut.io.cpuAccept.poke(true.B)
+      for (word <- words.indices.dropRight(1)) {
+        dut.io.cpuAddress.poke((word * 4).U)
+        dut.io.cpuNextAddress.poke(((word + 1) * 4).U)
+        dut.io.cpuTagNextAddress.poke(((word + 2) * 4).U)
+        dut.io.cpuReady.expect(true.B)
+        dut.io.cpuReadData.expect(words(word).U)
+        dut.io.memory.request.expect(false.B)
+        dut.clock.step()
+      }
+
+      dut.io.cpuAddress.poke(12.U)
+      dut.io.cpuNextAddress.poke(0.U)
+      dut.io.cpuTagNextAddress.poke(0.U)
+      dut.io.cpuReady.expect(true.B)
+      dut.io.cpuReadData.expect(words.last.U)
+      dut.io.memory.request.expect(false.B)
+    }
+  }
+}

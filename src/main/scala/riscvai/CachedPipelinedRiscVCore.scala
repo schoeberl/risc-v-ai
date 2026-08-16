@@ -45,9 +45,12 @@ class CachedPipelinedRiscVCore(
   dataCache.io.cpuRead := core.io.dataReadEnable
   dataCache.io.cpuWrite := core.io.dataWriteEnable
   dataCache.io.cpuAddress := core.io.dataAddress
+  dataCache.io.cpuNextAddress := core.io.dataNextAddress
+  dataCache.io.cpuTagNextAddress := core.io.dataTagNextAddress
   dataCache.io.cpuWriteData := core.io.dataWriteData
   dataCache.io.cpuWriteMask := core.io.dataWriteMask
   core.io.dataReadData := dataCache.io.cpuReadData
+  core.io.dataAtomicReadData := dataCache.io.cpuAtomicReadData
 
   val dataAdvance = !dataRequest || dataCache.io.cpuReady
   instructionCache.io.cpuAccept := core.io.instructionValid && dataAdvance

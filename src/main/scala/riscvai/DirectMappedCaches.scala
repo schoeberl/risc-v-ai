@@ -151,9 +151,12 @@ private[riscvai] class DataCache(
     val cpuRead = Input(Bool())
     val cpuWrite = Input(Bool())
     val cpuAddress = Input(UInt(32.W))
+    val cpuNextAddress = Input(UInt(32.W))
+    val cpuTagNextAddress = Input(UInt(32.W))
     val cpuWriteData = Input(UInt(32.W))
     val cpuWriteMask = Input(UInt(4.W))
     val cpuReadData = Output(UInt(32.W))
+    val cpuAtomicReadData = Output(UInt(32.W))
     val cpuReady = Output(Bool())
     val cpuAccept = Input(Bool())
     val memory = new CacheMemoryPort
@@ -163,21 +166,12 @@ private[riscvai] class DataCache(
   private val memoryAddressBits = log2Ceil(wordCount)
 
   private object State extends ChiselEnum {
-    val idle, lookup, prepareWrite, cacheWrite, complete, refill, writeThrough = Value
+    val idle, prime, prepareWrite, cacheWrite, complete, refill, writeThrough = Value
   }
   private val state = RegInit(State.idle)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = Reg(Vec(lineCount, UInt(tagBits.W)))
+  private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
   private val data = CacheDataMemory(wordCount, useSky130Sram)
-
-  private val requestAddress = Reg(UInt(32.W))
-  private val requestIndex = Reg(UInt(indexBits.W))
-  private val requestTag = Reg(UInt(tagBits.W))
-  private val requestRead = Reg(Bool())
-  private val requestWrite = Reg(Bool())
-  private val requestWriteMask = Reg(UInt(4.W))
-  private val lookupTag = Reg(UInt(tagBits.W))
-  private val lookupValid = Reg(Bool())
 
   private val missBase = Reg(UInt(32.W))
   private val missIndex = Reg(UInt(indexBits.W))
@@ -192,14 +186,29 @@ private[riscvai] class DataCache(
 
   val cpuIndex = io.cpuAddress(offsetBits + indexBits - 1, offsetBits)
   val cpuTag = io.cpuAddress(31, offsetBits + indexBits)
-  val cpuWordAddress = io.cpuAddress(offsetBits + indexBits - 1, 2)
-  val hit = lookupValid && lookupTag === requestTag
+  val nextIndex = io.cpuNextAddress(offsetBits + indexBits - 1, offsetBits)
+  val nextTag = io.cpuNextAddress(31, offsetBits + indexBits)
+  val nextWordAddress = io.cpuNextAddress(offsetBits + indexBits - 1, 2)
+  val tagNextIndex = io.cpuTagNextAddress(offsetBits + indexBits - 1, offsetBits)
+  val lookupEnable = state === State.idle || state === State.prime
+  val completingWrite = state === State.writeThrough && io.memory.ready
+  val dataLookupEnable = lookupEnable || completingWrite
+  val lookupTag = tags.read(Mux(state === State.prime, nextIndex, tagNextIndex), lookupEnable)
+  val nextHit = valid(nextIndex) && lookupTag === nextTag
+  val hit = RegInit(false.B)
   val hitData = data.readData
 
   val refillWrite = state === State.refill && io.memory.ready
   val hitWrite = state === State.cacheWrite
-  data.readEnable := state === State.idle && io.cpuRequest
-  data.readAddress := cpuWordAddress
+  // The tag read starts in decode. Execute compares its result and registers the
+  // hit while the data SRAM captures the effective address. Memory/writeback
+  // therefore consumes registered hit state alongside the synchronous data.
+  data.readEnable := dataLookupEnable
+  data.readAddress := Mux(
+    state === State.prime,
+    io.cpuAddress(offsetBits + indexBits - 1, 2),
+    nextWordAddress
+  )
   data.writeEnable := refillWrite || hitWrite
   data.writeAddress := Mux(
     refillWrite,
@@ -209,8 +218,21 @@ private[riscvai] class DataCache(
   data.writeData := Mux(refillWrite, io.memory.readData, pendingWriteData)
   data.writeMask := Mux(refillWrite, "b1111".U, pendingWriteMask)
 
-  io.cpuReadData := pendingReadData
-  io.cpuReady := state === State.complete
+  when(lookupEnable) {
+    // A completed refill necessarily matches the held request. This also lets
+    // the prime cycle use the tag port to prepare the following instruction.
+    hit := Mux(state === State.prime, true.B, nextHit)
+  }
+
+  io.cpuReadData := Mux(state === State.idle, hitData, pendingReadData)
+  // Keep the AMO calculation structurally behind the registered old value;
+  // otherwise STA sees a false SRAM-to-AMO half-cycle path through cpuReadData.
+  io.cpuAtomicReadData := pendingReadData
+  io.cpuReady := state === State.idle && io.cpuRequest && io.cpuRead &&
+    !io.cpuWrite && hit
+  when(state === State.complete) {
+    io.cpuReady := true.B
+  }
   when(state === State.writeThrough) {
     io.cpuReady := io.memory.ready
   }
@@ -228,36 +250,28 @@ private[riscvai] class DataCache(
   switch(state) {
     is(State.idle) {
       when(io.cpuRequest) {
-        requestAddress := io.cpuAddress
-        requestIndex := cpuIndex
-        requestTag := cpuTag
-        requestRead := io.cpuRead
-        requestWrite := io.cpuWrite
-        requestWriteMask := io.cpuWriteMask
-        lookupTag := tags(cpuIndex)
-        lookupValid := valid(cpuIndex)
-        state := State.lookup
+        when(io.cpuRead && !hit) {
+          // An AMO is both a read and a write. Refill first so its old value is valid.
+          missBase := io.cpuAddress & lineMask
+          missIndex := cpuIndex
+          missTag := cpuTag
+          refillWord := 0.U
+          valid(cpuIndex) := false.B
+          state := State.refill
+        }.elsewhen(io.cpuWrite) {
+          pendingWriteAddress := io.cpuAddress
+          pendingWriteMask := io.cpuWriteMask
+          pendingReadData := Mux(hit, hitData, 0.U)
+          pendingCacheHit := hit
+          state := State.prepareWrite
+        }.elsewhen(io.cpuRead && !io.cpuAccept) {
+          pendingReadData := hitData
+          state := State.complete
+        }
       }
     }
-    is(State.lookup) {
-      when(requestRead && !hit) {
-        // An AMO is both a read and a write. Refill first so its old value is valid.
-        missBase := requestAddress & lineMask
-        missIndex := requestIndex
-        missTag := requestTag
-        refillWord := 0.U
-        valid(requestIndex) := false.B
-        state := State.refill
-      }.elsewhen(requestWrite) {
-        pendingWriteAddress := requestAddress
-        pendingWriteMask := requestWriteMask
-        pendingReadData := Mux(hit, hitData, 0.U)
-        pendingCacheHit := hit
-        state := State.prepareWrite
-      }.otherwise {
-        pendingReadData := hitData
-        state := State.complete
-      }
+    is(State.prime) {
+      state := State.idle
     }
     is(State.prepareWrite) {
       // Give AMO result generation a full cycle after registering the old value.
@@ -275,9 +289,11 @@ private[riscvai] class DataCache(
     is(State.refill) {
       when(io.memory.ready) {
         when(refillWord === (wordsPerLine - 1).U) {
-          tags(missIndex) := missTag
+          tags.write(missIndex, missTag)
           valid(missIndex) := true.B
-          state := State.idle
+          // Avoid inferred-memory read-during-write behavior. The following
+          // prime cycle reissues the held request to both synchronous memories.
+          state := State.prime
         }.otherwise {
           refillWord := refillWord + 1.U
         }

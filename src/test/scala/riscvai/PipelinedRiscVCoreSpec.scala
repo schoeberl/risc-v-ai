@@ -48,6 +48,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     dut.io.instruction.poke(Nop.U)
     dut.io.instructionValid.poke(true.B)
     dut.io.dataReadData.poke(0.U)
+    dut.io.dataAtomicReadData.poke(0.U)
     dut.io.memoryStall.poke(false.B)
     dut.io.debugRegisterAddress.poke(0.U)
     dut.reset.poke(true.B)
@@ -79,7 +80,9 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     dut.io.instruction.poke(program.getOrElse(fetchAddress, Nop).U)
 
     val dataAddress = dut.io.dataAddress.peek().litValue
-    dut.io.dataReadData.poke(memory.getOrElse(dataAddress, BigInt(0)).U)
+    val readData = memory.getOrElse(dataAddress, BigInt(0))
+    dut.io.dataReadData.poke(readData.U)
+    dut.io.dataAtomicReadData.poke(readData.U)
     if (dut.io.dataWriteEnable.peek().litToBoolean) {
       val oldValue = memory.getOrElse(dataAddress, BigInt(0))
       val newValue = dut.io.dataWriteData.peek().litValue

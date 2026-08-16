@@ -48,7 +48,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     val instructionValid = Input(Bool())
 
     val dataAddress = Output(UInt(32.W))
+    val dataNextAddress = Output(UInt(32.W))
+    val dataTagNextAddress = Output(UInt(32.W))
     val dataReadData = Input(UInt(32.W))
+    val dataAtomicReadData = Input(UInt(32.W))
     val dataReadEnable = Output(Bool())
     val dataWriteData = Output(UInt(32.W))
     val dataWriteEnable = Output(Bool())
@@ -147,29 +150,29 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.atomicOperation,
     executeMemoryWriteback.storeData
   )(Seq(
-    AtomicAdd -> (io.dataReadData + executeMemoryWriteback.storeData),
+    AtomicAdd -> (io.dataAtomicReadData + executeMemoryWriteback.storeData),
     AtomicSwap -> executeMemoryWriteback.storeData,
-    AtomicXor -> (io.dataReadData ^ executeMemoryWriteback.storeData),
-    AtomicAnd -> (io.dataReadData & executeMemoryWriteback.storeData),
-    AtomicOr -> (io.dataReadData | executeMemoryWriteback.storeData),
+    AtomicXor -> (io.dataAtomicReadData ^ executeMemoryWriteback.storeData),
+    AtomicAnd -> (io.dataAtomicReadData & executeMemoryWriteback.storeData),
+    AtomicOr -> (io.dataAtomicReadData | executeMemoryWriteback.storeData),
     AtomicMin -> Mux(
-      io.dataReadData.asSInt < executeMemoryWriteback.storeData.asSInt,
-      io.dataReadData,
+      io.dataAtomicReadData.asSInt < executeMemoryWriteback.storeData.asSInt,
+      io.dataAtomicReadData,
       executeMemoryWriteback.storeData
     ),
     AtomicMax -> Mux(
-      io.dataReadData.asSInt > executeMemoryWriteback.storeData.asSInt,
-      io.dataReadData,
+      io.dataAtomicReadData.asSInt > executeMemoryWriteback.storeData.asSInt,
+      io.dataAtomicReadData,
       executeMemoryWriteback.storeData
     ),
     AtomicMinU -> Mux(
-      io.dataReadData < executeMemoryWriteback.storeData,
-      io.dataReadData,
+      io.dataAtomicReadData < executeMemoryWriteback.storeData,
+      io.dataAtomicReadData,
       executeMemoryWriteback.storeData
     ),
     AtomicMaxU -> Mux(
-      io.dataReadData > executeMemoryWriteback.storeData,
-      io.dataReadData,
+      io.dataAtomicReadData > executeMemoryWriteback.storeData,
+      io.dataAtomicReadData,
       executeMemoryWriteback.storeData
     )
   ))
@@ -497,6 +500,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     }
   }
 
+  // Let a synchronous data-cache SRAM capture the execute-stage address on the
+  // same edge that the request enters memory/writeback.
+  io.dataNextAddress := address & "hfffffffc".U
+
   val decodeInstruction = fetchDecodeExecute.instruction
   val decodeOpcode = decodeInstruction(6, 0)
   val decodeRs1 = decodeInstruction(19, 15)
@@ -528,6 +535,19 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val decodeRs1Value = readDecodeRegister(decodeRs1)
   val decodeRs2Value = readDecodeRegister(decodeRs2)
+  val decodeImmediateI = signExtend(decodeInstruction(31, 20), 12)
+  val decodeImmediateS = signExtend(
+    Cat(decodeInstruction(31, 25), decodeInstruction(11, 7)),
+    12
+  )
+  val decodeMemoryAddress = MuxLookup(decodeOpcode, 0.U(32.W))(Seq(
+    OpcodeLoad -> (decodeRs1Value + decodeImmediateI),
+    OpcodeStore -> (decodeRs1Value + decodeImmediateS),
+    OpcodeAtomic -> decodeRs1Value
+  ))
+  // Start the synchronous tag lookup in decode. Its result is compared and
+  // registered during execute, before it can affect memory/writeback control.
+  io.dataTagNextAddress := decodeMemoryAddress & "hfffffffc".U
   val unavailableResultHazard = fetchDecodeExecute.valid && decodeExecute.valid &&
     registerWrite && !illegal && (memoryRead || atomicValid) && rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))

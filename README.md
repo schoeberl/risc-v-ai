@@ -112,10 +112,13 @@ fetch-PC register capture the same value. After a line is resident, consecutive
 instruction hits therefore sustain one instruction per clock without stalling
 the core. On an instruction miss, fetch holds its PC and inserts invalid bubbles
 while older instructions continue through the pipeline; fetch resumes after the
-four-word refill. The data cache retains a registered lookup response and stalls
-the whole pipeline until a hit or refill response is accepted. Instruction tags
-use a synchronous memory aligned with the data SRAM; data-cache tags and both
-caches' resettable valid bits remain register arrays.
+four-word refill. The data-cache tag lookup starts from the decode-stage
+effective address; execute compares and registers the synchronous tag result
+while the data SRAM captures the execute-stage address. Memory/writeback thus
+receives aligned SRAM data and registered hit state, so a read hit can complete
+without a cache-induced stall, including for consecutive loads. Data-cache
+misses and all write-through stores still hold the whole pipeline until they
+complete. Both caches' resettable valid bits remain register arrays.
 
 The instruction cache is read-only and is invalidated by `FENCE.I`. The data
 cache is write-through: loads allocate a line, stores update a resident line and
@@ -310,6 +313,43 @@ directory name below `ppa/librelane/runs/`.
   `instructionValid`, and ends at instruction bit 23 of the fetch/decode
   register. This confirms that removing instruction readiness from the global
   retirement-stall network eliminated the much longer tag-to-CSR path.
+- `sram-caches-single-cycle-dcache-100mhz` — experimental execute-stage
+  addressing of synchronous data and tag memories, allowing a resident data
+  read to complete in memory/writeback without a cache-induced stall: WNS
+  -5.912 ns, estimated Fmax 62.85 MHz, TNS -12,896.300 ns, 442,999 µm² of
+  standard cells, 381,425 µm² of SRAM macros, 824,424 µm² combined area, and
+  45.427 mW. Against `sram-caches-local-icache-miss-100mhz`, Fmax regresses by
+  28.7%, TNS magnitude grows by 177x, and combined area increases by 0.36%.
+  The worst path starts at the data-tag memory's registered read address,
+  crosses its synthesized 64-entry tag mux and hit comparison, then propagates
+  through `cpuReady`, the global data-cache stall, core retirement/FENCE.I
+  control, and into an instruction-tag memory bit. Thus the experiment achieves
+  the intended one-hit-per-cycle data throughput but is not suitable for the
+  current 100 MHz target. The next implementation should determine and register
+  the data-tag hit before memory/writeback, or handle data misses with replay,
+  so tag lookup is removed from the global-stall path.
+- `sram-caches-pipelined-dcache-tag-100mhz` — moved the synchronous data-tag
+  lookup into decode and registered its comparison result in execute: WNS
+  -3.626 ns, estimated Fmax 73.39 MHz, TNS -620.795 ns, 444,123 µm² of standard
+  cells, 381,425 µm² of SRAM macros, 825,548 µm² combined area, and 45.386 mW.
+  This recovers 16.8% Fmax relative to the direct single-cycle experiment and
+  removes tag lookup from `cpuReady`. The new worst path is a half-cycle path
+  from the data SRAM's falling-edge output through AMO result logic to the
+  registered write data. The state machine logically uses a registered old
+  value for that calculation, but the shared load/AMO data signal leaves the
+  false structural path visible to STA.
+- `sram-caches-pipelined-dcache-tag-amo-100mhz` — added a dedicated registered
+  AMO operand path, structurally cutting the false SRAM-to-AMO path: WNS -3.230
+  ns, estimated Fmax 75.59 MHz, TNS -2,852.700 ns, 444,274 µm² of standard
+  cells, 381,425 µm² of SRAM macros, 825,699 µm² combined area, and 45.225 mW.
+  This is 20.3% faster than the direct single-cycle data-cache experiment, with
+  0.15% more combined area, but remains 14.2% slower and 0.51% larger than
+  `sram-caches-local-icache-miss-100mhz`. The worst path now starts at the
+  registered atomic/store control, crosses data-request and `cpuReady` logic and
+  the global memory-stall network, and ends at the constrained top-level
+  `illegalInstruction` output. The SRAM data and tag lookup are no longer on the
+  worst path; further improvement should separate store/miss sequencing from
+  global retirement control or register nonarchitectural status outputs.
 
 The selected SRAM distribution supplies only a TT, 1.8 V, 25 °C Liberty model.
 The SRAM runs therefore use that nominal model at every standard-cell corner;
