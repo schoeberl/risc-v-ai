@@ -43,7 +43,9 @@ private class ExecuteMemoryWriteback extends Bundle {
 class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
+    val instructionNextAddress = Output(UInt(32.W))
     val instruction = Input(UInt(32.W))
+    val instructionValid = Input(Bool())
 
     val dataAddress = Output(UInt(32.W))
     val dataReadData = Input(UInt(32.W))
@@ -541,6 +543,23 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   csrs.io.writeEnable := legalCsrWrite && !executionStall && !io.memoryStall && !illegalTrap
   csrs.io.mret := mretActive
 
+  // A synchronous instruction memory captures this address on the same edge
+  // that fetchPc advances. Its output then corresponds to fetchPc throughout
+  // the following cycle.
+  val fetchPcNext = WireDefault(fetchPc)
+  when(reset.asBool) {
+    fetchPcNext := resetVector.U(32.W)
+  }.elsewhen(illegalTrap) {
+    fetchPcNext := csrs.io.trapVector
+  }.elsewhen(!io.memoryStall && !executionStall) {
+    when(executeRedirect) {
+      fetchPcNext := redirectTarget
+    }.elsewhen(!unavailableResultHazard && io.instructionValid) {
+      fetchPcNext := fetchPc + 4.U
+    }
+  }
+  io.instructionNextAddress := fetchPcNext
+
   when(illegalTrap) {
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     decodeExecute.valid := false.B
@@ -580,10 +599,12 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       decodeExecute.instruction := fetchDecodeExecute.instruction
       decodeExecute.rs1Value := decodeRs1Value
       decodeExecute.rs2Value := decodeRs2Value
-      fetchDecodeExecute.valid := true.B
-      fetchDecodeExecute.pc := fetchPc
-      fetchDecodeExecute.instruction := io.instruction
-      fetchPc := fetchPc + 4.U
+      fetchDecodeExecute.valid := io.instructionValid
+      when(io.instructionValid) {
+        fetchDecodeExecute.pc := fetchPc
+        fetchDecodeExecute.instruction := io.instruction
+        fetchPc := fetchPc + 4.U
+      }
     }
   }
 

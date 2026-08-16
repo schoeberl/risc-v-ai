@@ -9,6 +9,7 @@ VERILOG_FILES:
   - dir::../../generated/PipelinedRiscVCore.sv
   - dir::../../generated/Sky130CacheDataMemory.sv
   - dir::../../generated/Sky130CachedPipelinedRiscVCore.sv
+  - dir::../../generated/tags_64x22.sv
 
 CLOCK_PORT: clock
 CLOCK_PERIOD: 10.0

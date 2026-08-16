@@ -53,7 +53,12 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
       remaining: Int
   )
 
-  private case class RunResult(readTransfers: Int, writeTransfers: Int, stallCycles: Int)
+  private case class RunResult(
+      readTransfers: Int,
+      writeTransfers: Int,
+      stallCycles: Int,
+      retirementsDuringWatchedRead: Int
+  )
 
   private def initialize(dut: CachedPipelinedRiscVCore): Unit = {
     dut.io.memoryReady.poke(false.B)
@@ -77,17 +82,25 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
       dut: CachedPipelinedRiscVCore,
       memory: collection.mutable.Map[BigInt, BigInt],
       cycles: Int,
-      latency: Int = 2
+      latency: Int = 2,
+      watchReadAddress: BigInt => Boolean = _ => false
   ): RunResult = {
     var pending = Option.empty[Pending]
     var readTransfers = 0
     var writeTransfers = 0
     var stallCycles = 0
+    var retirementsDuringWatchedRead = 0
 
     for (_ <- 0 until cycles) {
       dut.io.memoryReady.poke(false.B)
       dut.io.memoryReadData.poke(0.U)
       if (dut.io.pipelineStall.peek().litToBoolean) stallCycles += 1
+      val watchedReadOutstanding = pending.exists { transaction =>
+        !transaction.write && watchReadAddress(transaction.address)
+      }
+      if (watchedReadOutstanding && dut.io.retiredValid.peek().litToBoolean) {
+        retirementsDuringWatchedRead += 1
+      }
 
       var accepted = false
       pending.foreach { transaction =>
@@ -136,7 +149,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
       }
     }
 
-    RunResult(readTransfers, writeTransfers, stallCycles)
+    RunResult(readTransfers, writeTransfers, stallCycles, retirementsDuringWatchedRead)
   }
 
   "CachedPipelinedRiscVCore" - {
@@ -223,6 +236,37 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
         expectRegister(dut, 1, 7)
         result.readTransfers must be >= 8
         result.readTransfers must be <= 12
+      }
+    }
+
+    "handles an instruction miss locally while older instructions retire" in {
+      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+        initialize(dut)
+        val memory = collection.mutable.Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(1, 0, 0, 1),             // addi x1, x0, 1
+          BigInt(0x04) -> iType(2, 0, 0, 2),             // addi x2, x0, 2
+          BigInt(0x08) -> iType(3, 0, 0, 3),             // addi x3, x0, 3
+          BigInt(0x0c) -> BigInt("0000100f", 16),        // fence.i
+          BigInt(0x10) -> iType(5, 0, 0, 5),             // addi x5, x0, 5
+          BigInt(0x14) -> jType(0, 0),                   // loop
+          BigInt(0x18) -> BigInt("00000013", 16),        // nop
+          BigInt(0x1c) -> BigInt("00000013", 16)         // nop
+        )
+
+        val result = runWithMemory(
+          dut,
+          memory,
+          cycles = 300,
+          latency = 6,
+          watchReadAddress = address => address >= 0x10 && address < 0x20
+        )
+
+        expectRegister(dut, 1, 1)
+        expectRegister(dut, 2, 2)
+        expectRegister(dut, 3, 3)
+        expectRegister(dut, 5, 5)
+        result.retirementsDuringWatchedRead must be > 0
+        result.stallCycles mustBe 0
       }
     }
   }

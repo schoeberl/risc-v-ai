@@ -3,11 +3,14 @@ VERILOG_FILES:
   - dir::../../generated/CacheArbiter.sv
   - dir::../../generated/InstructionCache.sv
   - dir::../../generated/DataCache.sv
+  - dir::../../generated/InferredCacheDataMemory.sv
   - dir::../../generated/IterativeDivider.sv
   - dir::../../generated/MachineCsrs.sv
   - dir::../../generated/PipelinedMultiplier.sv
   - dir::../../generated/PipelinedRiscVCore.sv
   - dir::../../generated/CachedPipelinedRiscVCore.sv
+  - dir::../../generated/memory_256x32.sv
+  - dir::../../generated/tags_64x22.sv
 
 CLOCK_PORT: clock
 CLOCK_PERIOD: 10.0

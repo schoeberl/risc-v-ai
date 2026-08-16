@@ -106,10 +106,16 @@ platform timer is added, the `time` CSR aliases the cycle counter.
 
 The cached top level currently uses separate 1 KiB direct-mapped instruction and
 data caches with 16-byte lines. These sizes and the line size are constructor
-parameters. Cache data uses synchronous storage, so a hit has a registered
-lookup response and holds the pipeline until that response is accepted. A miss
-continues to hold the pipeline while four 32-bit words are refilled. Tags remain
-small register arrays.
+parameters. Cache data uses synchronous storage. The instruction-cache SRAM
+address is driven by the core's next-PC signal, so its address register and the
+fetch-PC register capture the same value. After a line is resident, consecutive
+instruction hits therefore sustain one instruction per clock without stalling
+the core. On an instruction miss, fetch holds its PC and inserts invalid bubbles
+while older instructions continue through the pipeline; fetch resumes after the
+four-word refill. The data cache retains a registered lookup response and stalls
+the whole pipeline until a hit or refill response is accepted. Instruction tags
+use a synchronous memory aligned with the data SRAM; data-cache tags and both
+caches' resettable valid bits remain register arrays.
 
 The instruction cache is read-only and is invalidated by `FENCE.I`. The data
 cache is write-through: loads allocate a line, stores update a resident line and
@@ -129,8 +135,9 @@ The default cached top infers synchronous memories, which FPGA tools can map to
 block RAM. `Sky130CachedPipelinedRiscVCore` instead instantiates two
 `sky130_sram_1kbyte_1rw1r_32x256_8` OpenRAM macros, one for each cache. Port 1 is
 the lookup port; port 0 performs byte-masked store updates and full-word
-refills. The macro's falling-edge read output is captured before it reaches the
-core, keeping SRAM-to-core logic out of the critical path.
+refills. The instruction macro's falling-edge output directly supplies the
+instruction for capture at the next rising edge. The data macro's output is
+captured in the cache before it reaches the core.
 
 ## RTL and Sky130 PPA
 
@@ -266,6 +273,43 @@ directory name below `ppa/librelane/runs/`.
   the SRAM-backed caches no longer impose the timing limit; their different top
   levels and floorplans make the small difference unsuitable as a claimed
   speedup.
+- `sram-caches-single-cycle-icache-100mhz` — experimental removal of the
+  instruction-cache response register, with the SRAM address driven from the
+  core's next-PC signal: WNS -4.869 ns, estimated Fmax 67.26 MHz, TNS -622.251
+  ns, 439,105 µm² of standard cells, 381,425 µm² of SRAM macros, and 820,530
+  µm² combined area. Compared with the registered-response version, combined
+  area increases by only 0.11%, but estimated Fmax falls by 25.5%. The critical
+  path starts at `decodeExecute_instruction[14]`, passes through redirect and
+  next-PC selection, then through the asynchronous 64-entry instruction-tag
+  register mux, and ends at the selected-tag register. The next optimization is
+  to make the tag lookup synchronous and align it with the SRAM data read.
+- `sram-caches-sync-icache-tags-100mhz` — changed the instruction tags to a
+  synchronous memory addressed alongside the instruction-data SRAM: WNS -5.655
+  ns, estimated Fmax 63.88 MHz, TNS -5,914.590 ns, 440,436 µm² of standard
+  cells, 381,425 µm² of SRAM macros, and 821,861 µm² combined area. This removed
+  the next-PC-to-selected-tag-register critical path, but timing regressed a
+  further 5.0% from the asynchronous-tag single-cycle experiment. The new worst
+  path starts at the tag memory's registered read address, passes through its
+  synthesized 64-entry tag mux and hit comparison, then continues through the
+  cache-ready/core-stall network into CSR retirement state. Relative to the
+  original registered cache-response version, combined area is 0.27% higher and
+  estimated Fmax is 29.3% lower. Achieving both one-hit-per-cycle throughput and
+  high Fmax will require decoupling speculative fetch hit/miss handling from the
+  core-wide retirement stall rather than adding another cache lookup register.
+- `sram-caches-local-icache-miss-100mhz` — replaced the instruction cache's
+  core-wide miss stall with local fetch backpressure: a miss holds the fetch PC
+  and injects invalid bubbles while older pipeline stages drain. WNS is -1.350
+  ns, estimated Fmax is 88.11 MHz, TNS is -73.004 ns, standard-cell area is
+  440,076 µm², SRAM macro area is 381,425 µm², combined area is 821,501
+  µm², and power is 45.570 mW. This improves estimated Fmax by 37.9% and
+  reduces TNS by 98.8% relative to the synchronous-tag/global-stall experiment,
+  with effectively unchanged area. It is 2.4% slower and 0.23% larger than the
+  registered-response baseline, but retains one-hit-per-cycle instruction
+  throughput. The new worst path starts at the synchronous tag memory's read
+  address, passes through the synthesized tag mux and hit comparison to
+  `instructionValid`, and ends at instruction bit 23 of the fetch/decode
+  register. This confirms that removing instruction readiness from the global
+  retirement-stall network eliminated the much longer tag-to-CSR path.
 
 The selected SRAM distribution supplies only a TT, 1.8 V, 25 °C Liberty model.
 The SRAM runs therefore use that nominal model at every standard-cell corner;

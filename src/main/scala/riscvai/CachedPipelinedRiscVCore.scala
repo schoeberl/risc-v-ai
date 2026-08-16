@@ -34,9 +34,11 @@ class CachedPipelinedRiscVCore(
   private val arbiter = Module(new CacheArbiter)
 
   instructionCache.io.cpuRequest := true.B
-  instructionCache.io.cpuAddress := core.io.instructionAddress
+  instructionCache.io.cpuNextAddress := core.io.instructionNextAddress
   instructionCache.io.invalidate := core.io.instructionCacheInvalidate
   core.io.instruction := instructionCache.io.cpuData
+  core.io.instructionValid := instructionCache.io.cpuReady &&
+    !core.io.instructionCacheInvalidate
 
   val dataRequest = core.io.dataReadEnable || core.io.dataWriteEnable
   dataCache.io.cpuRequest := dataRequest
@@ -47,12 +49,10 @@ class CachedPipelinedRiscVCore(
   dataCache.io.cpuWriteMask := core.io.dataWriteMask
   core.io.dataReadData := dataCache.io.cpuReadData
 
-  val cacheAdvance = instructionCache.io.cpuReady &&
-    (!dataRequest || dataCache.io.cpuReady)
-  instructionCache.io.cpuAccept := cacheAdvance
-  dataCache.io.cpuAccept := cacheAdvance && dataRequest
-  val cacheStall = !cacheAdvance
-  core.io.memoryStall := cacheStall
+  val dataAdvance = !dataRequest || dataCache.io.cpuReady
+  instructionCache.io.cpuAccept := core.io.instructionValid && dataAdvance
+  dataCache.io.cpuAccept := dataAdvance && dataRequest
+  core.io.memoryStall := !dataAdvance
 
   arbiter.io.instruction <> instructionCache.io.memory
   arbiter.io.data <> dataCache.io.memory

@@ -30,7 +30,7 @@ private[riscvai] class InstructionCache(
 
   val io = IO(new Bundle {
     val cpuRequest = Input(Bool())
-    val cpuAddress = Input(UInt(32.W))
+    val cpuNextAddress = Input(UInt(32.W))
     val cpuData = Output(UInt(32.W))
     val cpuReady = Output(Bool())
     val cpuAccept = Input(Bool())
@@ -41,60 +41,68 @@ private[riscvai] class InstructionCache(
   private val wordCount = cacheBytes / 4
 
   private object State extends ChiselEnum {
-    val idle, lookup, complete, refill = Value
+    val prime, lookup, refill = Value
   }
-  private val state = RegInit(State.idle)
+  private val state = RegInit(State.prime)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = Reg(Vec(lineCount, UInt(tagBits.W)))
+  private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
   private val data = CacheDataMemory(wordCount, useSky130Sram)
   private val requestIndex = Reg(UInt(indexBits.W))
   private val requestTag = Reg(UInt(tagBits.W))
-  private val lookupTag = Reg(UInt(tagBits.W))
-  private val lookupValid = Reg(Bool())
-  private val responseData = Reg(UInt(32.W))
   private val missBase = Reg(UInt(32.W))
   private val missIndex = Reg(UInt(indexBits.W))
   private val missTag = Reg(UInt(tagBits.W))
   private val refillWord = RegInit(0.U(wordBits.W))
+  private val invalidatePending = RegInit(false.B)
 
-  val cpuIndex = io.cpuAddress(offsetBits + indexBits - 1, offsetBits)
-  val cpuTag = io.cpuAddress(31, offsetBits + indexBits)
-  val cpuWordAddress = io.cpuAddress(offsetBits + indexBits - 1, 2)
-  val hit = lookupValid && lookupTag === requestTag
+  val nextIndex = io.cpuNextAddress(offsetBits + indexBits - 1, offsetBits)
+  val nextTag = io.cpuNextAddress(31, offsetBits + indexBits)
+  val nextWordAddress = io.cpuNextAddress(offsetBits + indexBits - 1, 2)
+  val lookupTag = tags.read(nextIndex, io.cpuRequest)
+  val hit = valid(requestIndex) && lookupTag === requestTag
 
-  data.readEnable := state === State.idle && io.cpuRequest
-  data.readAddress := cpuWordAddress
+  // The SRAM address register and the core fetch-PC register capture the same
+  // next-PC value. The synchronous read data therefore belongs to the current
+  // fetch PC without an additional cache response register.
+  data.readEnable := io.cpuRequest
+  data.readAddress := nextWordAddress
   data.writeEnable := state === State.refill && io.memory.ready
   data.writeAddress := Cat(missIndex, refillWord)
   data.writeData := io.memory.readData
   data.writeMask := "b1111".U
 
-  io.cpuData := responseData
-  io.cpuReady := state === State.complete
+  io.cpuData := data.readData
+  io.cpuReady := state === State.lookup && hit
   io.memory.request := state === State.refill
   io.memory.write := false.B
   io.memory.address := missBase + (refillWord << 2)
   io.memory.writeData := 0.U
   io.memory.writeMask := 0.U
 
-  when(io.invalidate) {
+  val invalidateRequested = io.invalidate || invalidatePending
+  when(state === State.refill && invalidateRequested && !io.memory.ready) {
+    // The shared-memory protocol requires a request to remain asserted until
+    // ready. Defer FENCE.I invalidation until the active refill word completes.
+    invalidatePending := true.B
+  }.elsewhen(invalidateRequested) {
     valid.foreach(_ := false.B)
-    state := State.idle
+    requestIndex := nextIndex
+    requestTag := nextTag
+    invalidatePending := false.B
+    state := State.lookup
   }.otherwise {
     switch(state) {
-      is(State.idle) {
-        when(io.cpuRequest) {
-          requestIndex := cpuIndex
-          requestTag := cpuTag
-          lookupTag := tags(cpuIndex)
-          lookupValid := valid(cpuIndex)
-          state := State.lookup
-        }
+      is(State.prime) {
+        requestIndex := nextIndex
+        requestTag := nextTag
+        state := State.lookup
       }
       is(State.lookup) {
         when(hit) {
-          responseData := data.readData
-          state := State.complete
+          when(io.cpuAccept) {
+            requestIndex := nextIndex
+            requestTag := nextTag
+          }
         }.otherwise {
           missBase := Cat(requestTag, requestIndex, 0.U(offsetBits.W))
           missIndex := requestIndex
@@ -104,17 +112,14 @@ private[riscvai] class InstructionCache(
           state := State.refill
         }
       }
-      is(State.complete) {
-        when(io.cpuAccept) {
-          state := State.idle
-        }
-      }
       is(State.refill) {
         when(io.memory.ready) {
           when(refillWord === (wordsPerLine - 1).U) {
-            tags(missIndex) := missTag
+            tags.write(missIndex, missTag)
             valid(missIndex) := true.B
-            state := State.idle
+            // Prime a fresh synchronous read after the refill write. This avoids
+            // relying on inferred-memory read-during-write behavior.
+            state := State.prime
           }.otherwise {
             refillWord := refillWord + 1.U
           }
