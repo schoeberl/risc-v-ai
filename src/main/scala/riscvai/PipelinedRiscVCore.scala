@@ -242,6 +242,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   multiplier.io.start := multiplierStart
   multiplier.io.lhsSigned := funct3 === "b001".U || funct3 === "b010".U
   multiplier.io.rhsSigned := funct3 === "b001".U
+  multiplier.io.highResult := funct3 =/= "b000".U
   multiplier.io.lhs := rs1Value
   multiplier.io.rhs := rs2Value
 
@@ -445,15 +446,10 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       illegal := false.B
       registerWrite := true.B
       when(funct7 === "b0000001".U) {
-        switch(funct3) {
-          is("b000".U) { result := multiplier.io.product(31, 0) } // MUL
-          is("b001".U) { result := multiplier.io.product(63, 32) } // MULH
-          is("b010".U) { result := multiplier.io.product(63, 32) } // MULHSU
-          is("b011".U) { result := multiplier.io.product(63, 32) } // MULHU
-          is("b100".U) { result := divider.io.quotient } // DIV
-          is("b101".U) { result := divider.io.quotient } // DIVU
-          is("b110".U) { result := divider.io.remainder } // REM
-          is("b111".U) { result := divider.io.remainder } // REMU
+        when(funct3(2)) {
+          result := Mux(funct3(1), divider.io.remainder, divider.io.quotient)
+        }.otherwise {
+          result := multiplier.io.result
         }
       }.otherwise {
         switch(funct3) {

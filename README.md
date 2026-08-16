@@ -81,8 +81,9 @@ zero register, control flow, return addresses, memory traffic, and trap/return
 behavior.
 
 The pipelined core uses a shared 32-cycle iterative divider for `DIV`, `DIVU`,
-`REM`, and `REMU`, plus a shared four-stage multiplier for `MUL`, `MULH`,
-`MULHSU`, and `MULHU`. The pipeline stalls until each multicycle result is ready.
+`REM`, and `REMU`, plus a shared five-stage multiplier for `MUL`, `MULH`,
+`MULHSU`, and `MULHU`. Its final stage registers the selected low or high 32-bit
+result. The pipeline stalls until each multicycle result is ready.
 The single-cycle reference core keeps combinational RV32M operations for
 straightforward architectural checking.
 

@@ -250,7 +250,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
       }
     }
 
-    "pipelines multiplication across four stages and forwards the completed result" in {
+    "registers five-stage multiplication results and forwards them" in {
       simulate(new PipelinedRiscVCore) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
@@ -268,7 +268,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
           if (runCycle(dut, program, memory)) multiplierStalls += 1
         }
 
-        multiplierStalls mustBe 8
+        multiplierStalls mustBe 10
         expectRegister(dut, 3, BigInt("ffffffeb", 16))
         expectRegister(dut, 4, BigInt("ffffffec", 16))
         expectRegister(dut, 5, BigInt("ffffffff", 16))

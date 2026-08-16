@@ -3,28 +3,31 @@ package riscvai
 import chisel3._
 import chisel3.util.Cat
 
-/** Four-stage 32-bit multiplier built from four 16-bit partial products. */
+/** Five-stage 32-bit multiplier built from four 16-bit partial products. */
 private class PipelinedMultiplier extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
     val lhsSigned = Input(Bool())
     val rhsSigned = Input(Bool())
+    val highResult = Input(Bool())
     val lhs = Input(UInt(32.W))
     val rhs = Input(UInt(32.W))
 
     val busy = Output(Bool())
     val done = Output(Bool())
-    val product = Output(UInt(64.W))
+    val result = Output(UInt(32.W))
   })
 
   private val valid1 = RegInit(false.B)
   private val valid2 = RegInit(false.B)
   private val valid3 = RegInit(false.B)
   private val valid4 = RegInit(false.B)
+  private val valid5 = RegInit(false.B)
 
   private val lhsMagnitude1 = RegInit(0.U(32.W))
   private val rhsMagnitude1 = RegInit(0.U(32.W))
   private val negative1 = RegInit(false.B)
+  private val highResultReg = RegInit(false.B)
 
   private val partial00 = RegInit(0.U(32.W))
   private val partial01 = RegInit(0.U(32.W))
@@ -36,6 +39,7 @@ private class PipelinedMultiplier extends Module {
   private val upperSum = RegInit(0.U(64.W))
   private val negative3 = RegInit(false.B)
   private val product = RegInit(0.U(64.W))
+  private val result = RegInit(0.U(32.W))
 
   private def twosComplement(value: UInt): UInt = (~value).asUInt + 1.U
 
@@ -44,6 +48,7 @@ private class PipelinedMultiplier extends Module {
   private val lhsMagnitude = Mux(lhsNegative, twosComplement(io.lhs), io.lhs)
   private val rhsMagnitude = Mux(rhsNegative, twosComplement(io.rhs), io.rhs)
 
+  valid5 := valid4
   valid4 := valid3
   valid3 := valid2
   valid2 := valid1
@@ -53,6 +58,7 @@ private class PipelinedMultiplier extends Module {
     lhsMagnitude1 := lhsMagnitude
     rhsMagnitude1 := rhsMagnitude
     negative1 := lhsNegative ^ rhsNegative
+    highResultReg := io.highResult
   }
 
   when(valid1) {
@@ -74,7 +80,11 @@ private class PipelinedMultiplier extends Module {
     product := Mux(negative3, twosComplement(magnitude), magnitude)
   }
 
-  io.busy := valid1 || valid2 || valid3
-  io.done := valid4
-  io.product := product
+  when(valid4) {
+    result := Mux(highResultReg, product(63, 32), product(31, 0))
+  }
+
+  io.busy := valid1 || valid2 || valid3 || valid4
+  io.done := valid5
+  io.result := result
 }
