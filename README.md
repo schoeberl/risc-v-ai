@@ -158,6 +158,17 @@ directory name below `ppa/librelane/runs/`.
   registered 32-bit halves: WNS -2.751 ns, estimated Fmax 78.42 MHz. The critical
   path moved out of the multiplier to the atomic read-modify-write path from
   `io_dataReadData` to `io_dataWriteData`.
+- `registered-atomic-rmw-100mhz` — experimental capture of the atomic read value
+  and registered replacement, later reverted: WNS -4.348 ns, estimated Fmax
+  69.70 MHz. This removed the input-to-output AMO path but exposed the
+  execute-to-decode bypass.
+- `registered-atomic-execute-bypass-100mhz` — experimental move of ALU forwarding
+  from decode to execute, later reverted: WNS -5.560 ns, estimated Fmax 64.27 MHz.
+- `registered-atomic-fsm-100mhz` — experimental registered AMO read-state control,
+  later reverted: WNS -6.734 ns, estimated Fmax 59.76 MHz.
+- `registered-atomic-state-control-100mhz` — experimental removal of the AMO
+  operation decode from retirement control, later reverted: WNS -5.746 ns,
+  estimated Fmax 63.51 MHz.
 
 The commit IDs in parentheses identify published source checkpoints. After
 checking one out, generate its RTL and run the same checked-in LibreLane config;
