@@ -9,6 +9,14 @@ private class FetchDecodeExecute extends Bundle {
   val instruction = UInt(32.W)
 }
 
+private class DecodeExecute extends Bundle {
+  val valid = Bool()
+  val pc = UInt(32.W)
+  val instruction = UInt(32.W)
+  val rs1Value = UInt(32.W)
+  val rs2Value = UInt(32.W)
+}
+
 private class ExecuteMemoryWriteback extends Bundle {
   val valid = Bool()
   val pc = UInt(32.W)
@@ -26,12 +34,11 @@ private class ExecuteMemoryWriteback extends Bundle {
   val illegal = Bool()
 }
 
-/** A three-stage, single-issue RV32IMA_Zicsr_Zifencei processor.
+/** A four-stage, single-issue RV32IMA_Zicsr_Zifencei processor.
   *
-  * The stages are fetch, decode/execute, and memory/writeback. Results from the
-  * final stage are forwarded to decode/execute. A load followed immediately by
-  * a dependent instruction incurs one stall cycle, avoiding a data-memory to
-  * ALU combinational path.
+  * The stages are fetch, decode/register-read, execute, and memory/writeback.
+  * Execute and writeback results are forwarded to decode. A load or atomic
+  * followed immediately by a dependent instruction incurs one stall cycle.
   */
 class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val io = IO(new Bundle {
@@ -85,6 +92,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val fetchPc = RegInit(resetVector.U(32.W))
   private val fetchDecodeExecute = Reg(new FetchDecodeExecute)
+  private val decodeExecute = Reg(new DecodeExecute)
   private val executeMemoryWriteback = Reg(new ExecuteMemoryWriteback)
   val registers = Reg(Vec(32, UInt(32.W)))
   val reservationValid = RegInit(false.B)
@@ -189,7 +197,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     registers(io.debugRegisterAddress)
   )
 
-  val instruction = fetchDecodeExecute.instruction
+  val instruction = decodeExecute.instruction
   val opcode = instruction(6, 0)
   val rd = instruction(11, 7)
   val funct3 = instruction(14, 12)
@@ -198,43 +206,18 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   val funct7 = instruction(31, 25)
   val isMret = instruction === "h30200073".U
 
-  val usesRs1 = opcode === OpcodeJalr || opcode === OpcodeBranch ||
-    opcode === OpcodeLoad || opcode === OpcodeStore ||
-    opcode === OpcodeOpImm || opcode === OpcodeOp || opcode === OpcodeAtomic ||
-    (opcode === OpcodeSystem && !funct3(2) && funct3 =/= 0.U)
-  val usesRs2 = opcode === OpcodeBranch || opcode === OpcodeStore ||
-    opcode === OpcodeOp || opcode === OpcodeAtomic
-
-  val loadUseHazard = fetchDecodeExecute.valid &&
-    executeMemoryWriteback.valid && executeMemoryWriteback.memoryRead &&
-    executeMemoryWriteback.rd =/= 0.U &&
-    ((usesRs1 && rs1 === executeMemoryWriteback.rd) ||
-      (usesRs2 && rs2 === executeMemoryWriteback.rd))
-  private def readRegister(address: UInt): UInt =
-    Mux(
-      address === 0.U,
-      0.U,
-      Mux(
-        writebackActive && executeMemoryWriteback.rd === address,
-        writebackData,
-        registers(address)
-      )
-    )
-
-  val rs1Value = readRegister(rs1)
-  val rs2Value = readRegister(rs2)
-  val divideInstruction = fetchDecodeExecute.valid && opcode === OpcodeOp &&
+  val rs1Value = decodeExecute.rs1Value
+  val rs2Value = decodeExecute.rs2Value
+  val divideInstruction = decodeExecute.valid && opcode === OpcodeOp &&
     funct7 === "b0000001".U && funct3(2)
-  val multiplyInstruction = fetchDecodeExecute.valid && opcode === OpcodeOp &&
+  val multiplyInstruction = decodeExecute.valid && opcode === OpcodeOp &&
     funct7 === "b0000001".U && !funct3(2)
   val dividerStart = divideInstruction && !divider.io.busy && !divider.io.done &&
-    !loadUseHazard && !illegalTrap
+    !illegalTrap
   val multiplierStart = multiplyInstruction && !multiplier.io.busy && !multiplier.io.done &&
-    !loadUseHazard && !illegalTrap
+    !illegalTrap
   val divideStall = divideInstruction && !divider.io.done
   val multiplyStall = multiplyInstruction && !multiplier.io.done
-  val pipelineStall = loadUseHazard || divideStall || multiplyStall
-  io.pipelineStall := pipelineStall
   divider.io.start := dividerStart
   divider.io.signed := !funct3(0)
   divider.io.dividend := rs1Value
@@ -308,22 +291,22 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     is(OpcodeAuipc) {
       illegal := false.B
       registerWrite := true.B
-      result := fetchDecodeExecute.pc + immediateU
+      result := decodeExecute.pc + immediateU
     }
 
     is(OpcodeJal) {
       illegal := false.B
       registerWrite := true.B
-      result := fetchDecodeExecute.pc + 4.U
+      result := decodeExecute.pc + 4.U
       redirect := true.B
-      redirectTarget := fetchDecodeExecute.pc + immediateJ
+      redirectTarget := decodeExecute.pc + immediateJ
     }
 
     is(OpcodeJalr) {
       when(funct3 === "b000".U) {
         illegal := false.B
         registerWrite := true.B
-        result := fetchDecodeExecute.pc + 4.U
+        result := decodeExecute.pc + 4.U
         redirect := true.B
         redirectTarget := (rs1Value + immediateI) & "hfffffffe".U
       }
@@ -345,7 +328,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
       }
       when(branchTaken && validBranch) {
         redirect := true.B
-        redirectTarget := fetchDecodeExecute.pc + immediateB
+        redirectTarget := decodeExecute.pc + immediateB
       }
     }
 
@@ -500,17 +483,63 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     }
   }
 
+  val decodeInstruction = fetchDecodeExecute.instruction
+  val decodeOpcode = decodeInstruction(6, 0)
+  val decodeRs1 = decodeInstruction(19, 15)
+  val decodeRs2 = decodeInstruction(24, 20)
+  val decodeFunct3 = decodeInstruction(14, 12)
+  val decodeUsesRs1 = decodeOpcode === OpcodeJalr || decodeOpcode === OpcodeBranch ||
+    decodeOpcode === OpcodeLoad || decodeOpcode === OpcodeStore ||
+    decodeOpcode === OpcodeOpImm || decodeOpcode === OpcodeOp || decodeOpcode === OpcodeAtomic ||
+    (decodeOpcode === OpcodeSystem && !decodeFunct3(2) && decodeFunct3 =/= 0.U)
+  val decodeUsesRs2 = decodeOpcode === OpcodeBranch || decodeOpcode === OpcodeStore ||
+    decodeOpcode === OpcodeOp || decodeOpcode === OpcodeAtomic
+
+  val executeForwardActive = decodeExecute.valid && registerWrite && !illegal &&
+    !memoryRead && !atomicValid && rd =/= 0.U
+  private def readDecodeRegister(address: UInt): UInt =
+    Mux(
+      address === 0.U,
+      0.U,
+      Mux(
+        executeForwardActive && rd === address,
+        result,
+        Mux(
+          writebackActive && executeMemoryWriteback.rd === address,
+          writebackData,
+          registers(address)
+        )
+      )
+    )
+
+  val decodeRs1Value = readDecodeRegister(decodeRs1)
+  val decodeRs2Value = readDecodeRegister(decodeRs2)
+  val unavailableResultHazard = fetchDecodeExecute.valid && decodeExecute.valid &&
+    registerWrite && !illegal && (memoryRead || atomicValid) && rd =/= 0.U &&
+    ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))
+  val executionStall = divideStall || multiplyStall
+  val pipelineStall = executionStall || unavailableResultHazard
+  io.pipelineStall := pipelineStall
+
+  val executeRedirect = redirect && decodeExecute.valid && !illegal
+  val legalCsrWrite = decodeExecute.valid && opcode === OpcodeSystem &&
+    validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
+  val mretActive = decodeExecute.valid && isMret && !executionStall && !illegalTrap
+  csrs.io.writeEnable := legalCsrWrite && !executionStall && !illegalTrap
+  csrs.io.mret := mretActive
+
   when(illegalTrap) {
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    decodeExecute.valid := false.B
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
-  }.elsewhen(pipelineStall) {
-    // Let the older instruction retire, hold decode/fetch, and inject a bubble.
+  }.elsewhen(executionStall) {
+    // Let the older instruction retire while execute, decode, and fetch hold.
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
   }.otherwise {
-    executeMemoryWriteback.valid := fetchDecodeExecute.valid
-    executeMemoryWriteback.pc := fetchDecodeExecute.pc
-    executeMemoryWriteback.instruction := fetchDecodeExecute.instruction
+    executeMemoryWriteback.valid := decodeExecute.valid
+    executeMemoryWriteback.pc := decodeExecute.pc
+    executeMemoryWriteback.instruction := decodeExecute.instruction
     executeMemoryWriteback.rd := rd
     executeMemoryWriteback.result := result
     executeMemoryWriteback.address := address
@@ -523,22 +552,25 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.atomicOperation := atomicOperation
     executeMemoryWriteback.illegal := illegal
 
-    when(redirect && fetchDecodeExecute.valid && !illegal) {
+    when(executeRedirect) {
+      decodeExecute.valid := false.B
       fetchDecodeExecute.valid := false.B
       fetchPc := redirectTarget
+    }.elsewhen(unavailableResultHazard) {
+      // The older load/atomic advances; hold decode/fetch and inject a bubble.
+      decodeExecute.valid := false.B
     }.otherwise {
+      decodeExecute.valid := fetchDecodeExecute.valid
+      decodeExecute.pc := fetchDecodeExecute.pc
+      decodeExecute.instruction := fetchDecodeExecute.instruction
+      decodeExecute.rs1Value := decodeRs1Value
+      decodeExecute.rs2Value := decodeRs2Value
       fetchDecodeExecute.valid := true.B
       fetchDecodeExecute.pc := fetchPc
       fetchDecodeExecute.instruction := io.instruction
       fetchPc := fetchPc + 4.U
     }
   }
-
-  val legalCsrWrite = fetchDecodeExecute.valid && opcode === OpcodeSystem &&
-    validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
-  val mretActive = fetchDecodeExecute.valid && isMret && !pipelineStall && !illegalTrap
-  csrs.io.writeEnable := legalCsrWrite && !pipelineStall && !illegalTrap
-  csrs.io.mret := mretActive
 
   val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
     !executeMemoryWriteback.illegal
@@ -554,6 +586,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   // Reset only the validity state so the datapath can use reset-free flops.
   when(reset.asBool) {
     fetchDecodeExecute.valid := false.B
+    decodeExecute.valid := false.B
     executeMemoryWriteback.valid := false.B
   }
 }

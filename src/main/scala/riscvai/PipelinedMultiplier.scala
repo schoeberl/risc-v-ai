@@ -3,7 +3,7 @@ package riscvai
 import chisel3._
 import chisel3.util.Cat
 
-/** Five-stage 32-bit multiplier built from four 16-bit partial products. */
+/** Six-stage 32-bit multiplier built from four 16-bit partial products. */
 private class PipelinedMultiplier extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -23,6 +23,7 @@ private class PipelinedMultiplier extends Module {
   private val valid3 = RegInit(false.B)
   private val valid4 = RegInit(false.B)
   private val valid5 = RegInit(false.B)
+  private val valid6 = RegInit(false.B)
 
   private val lhsMagnitude1 = Reg(UInt(32.W))
   private val rhsMagnitude1 = Reg(UInt(32.W))
@@ -38,7 +39,12 @@ private class PipelinedMultiplier extends Module {
   private val lowerSum = Reg(UInt(64.W))
   private val upperSum = Reg(UInt(64.W))
   private val negative3 = Reg(Bool())
-  private val product = Reg(UInt(64.W))
+  private val magnitude = Reg(UInt(64.W))
+  private val negative4 = Reg(Bool())
+  private val correctedLow = Reg(UInt(32.W))
+  private val magnitudeHigh = Reg(UInt(32.W))
+  private val carryToHigh = Reg(Bool())
+  private val negative5 = Reg(Bool())
   private val result = Reg(UInt(32.W))
 
   private def twosComplement(value: UInt): UInt = (~value).asUInt + 1.U
@@ -48,6 +54,7 @@ private class PipelinedMultiplier extends Module {
   private val lhsMagnitude = Mux(lhsNegative, twosComplement(io.lhs), io.lhs)
   private val rhsMagnitude = Mux(rhsNegative, twosComplement(io.rhs), io.rhs)
 
+  valid6 := valid5
   valid5 := valid4
   valid4 := valid3
   valid3 := valid2
@@ -76,15 +83,31 @@ private class PipelinedMultiplier extends Module {
   }
 
   when(valid3) {
-    val magnitude = lowerSum + upperSum
-    product := Mux(negative3, twosComplement(magnitude), magnitude)
+    magnitude := lowerSum + upperSum
+    negative4 := negative3
   }
 
   when(valid4) {
-    result := Mux(highResultReg, product(63, 32), product(31, 0))
+    correctedLow := Mux(
+      negative4,
+      twosComplement(magnitude(31, 0)),
+      magnitude(31, 0)
+    )
+    magnitudeHigh := magnitude(63, 32)
+    carryToHigh := magnitude(31, 0) === 0.U
+    negative5 := negative4
   }
 
-  io.busy := valid1 || valid2 || valid3 || valid4
-  io.done := valid5
+  when(valid5) {
+    val correctedHigh = Mux(
+      negative5,
+      (~magnitudeHigh).asUInt + carryToHigh,
+      magnitudeHigh
+    )
+    result := Mux(highResultReg, correctedHigh, correctedLow)
+  }
+
+  io.busy := valid1 || valid2 || valid3 || valid4 || valid5
+  io.done := valid6
   io.result := result
 }
