@@ -47,6 +47,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private def initialize(dut: PipelinedRiscVCore): Unit = {
     dut.io.instruction.poke(Nop.U)
     dut.io.dataReadData.poke(0.U)
+    dut.io.memoryStall.poke(false.B)
     dut.io.debugRegisterAddress.poke(0.U)
     dut.reset.poke(true.B)
     dut.clock.step()

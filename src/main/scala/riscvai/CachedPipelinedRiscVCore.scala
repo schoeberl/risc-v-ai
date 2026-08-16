@@ -1,0 +1,83 @@
+package riscvai
+
+import chisel3._
+
+/** Pipelined core with private 1 KiB instruction/data caches and one shared bus. */
+class CachedPipelinedRiscVCore(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useSky130Sram: Boolean = false
+) extends Module {
+  val io = IO(new Bundle {
+    val memoryRequest = Output(Bool())
+    val memoryWrite = Output(Bool())
+    val memoryAddress = Output(UInt(32.W))
+    val memoryWriteData = Output(UInt(32.W))
+    val memoryWriteMask = Output(UInt(4.W))
+    val memoryReady = Input(Bool())
+    val memoryReadData = Input(UInt(32.W))
+
+    val illegalInstruction = Output(Bool())
+    val pipelineStall = Output(Bool())
+    val retiredValid = Output(Bool())
+    val retiredPc = Output(UInt(32.W))
+    val retiredInstruction = Output(UInt(32.W))
+    val debugRegisterAddress = Input(UInt(5.W))
+    val debugRegisterData = Output(UInt(32.W))
+  })
+
+  private val core = Module(new PipelinedRiscVCore(resetVector))
+  private val instructionCache =
+    Module(new InstructionCache(cacheBytes, lineBytes, useSky130Sram))
+  private val dataCache = Module(new DataCache(cacheBytes, lineBytes, useSky130Sram))
+  private val arbiter = Module(new CacheArbiter)
+
+  instructionCache.io.cpuRequest := true.B
+  instructionCache.io.cpuAddress := core.io.instructionAddress
+  instructionCache.io.invalidate := core.io.instructionCacheInvalidate
+  core.io.instruction := instructionCache.io.cpuData
+
+  val dataRequest = core.io.dataReadEnable || core.io.dataWriteEnable
+  dataCache.io.cpuRequest := dataRequest
+  dataCache.io.cpuRead := core.io.dataReadEnable
+  dataCache.io.cpuWrite := core.io.dataWriteEnable
+  dataCache.io.cpuAddress := core.io.dataAddress
+  dataCache.io.cpuWriteData := core.io.dataWriteData
+  dataCache.io.cpuWriteMask := core.io.dataWriteMask
+  core.io.dataReadData := dataCache.io.cpuReadData
+
+  val cacheAdvance = instructionCache.io.cpuReady &&
+    (!dataRequest || dataCache.io.cpuReady)
+  instructionCache.io.cpuAccept := cacheAdvance
+  dataCache.io.cpuAccept := cacheAdvance && dataRequest
+  val cacheStall = !cacheAdvance
+  core.io.memoryStall := cacheStall
+
+  arbiter.io.instruction <> instructionCache.io.memory
+  arbiter.io.data <> dataCache.io.memory
+  arbiter.io.memoryReady := io.memoryReady
+  arbiter.io.memoryReadData := io.memoryReadData
+  io.memoryRequest := arbiter.io.memoryRequest
+  io.memoryWrite := arbiter.io.memoryWrite
+  io.memoryAddress := arbiter.io.memoryAddress
+  io.memoryWriteData := arbiter.io.memoryWriteData
+  io.memoryWriteMask := arbiter.io.memoryWriteMask
+
+  io.illegalInstruction := core.io.illegalInstruction
+  io.pipelineStall := core.io.pipelineStall
+  io.retiredValid := core.io.retiredValid
+  io.retiredPc := core.io.retiredPc
+  io.retiredInstruction := core.io.retiredInstruction
+  core.io.debugRegisterAddress := io.debugRegisterAddress
+  io.debugRegisterData := core.io.debugRegisterData
+}
+
+/** Sky130 implementation with one installed 1 KiB OpenRAM macro per cache. */
+class Sky130CachedPipelinedRiscVCore(resetVector: BigInt = 0)
+    extends CachedPipelinedRiscVCore(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useSky130Sram = true
+    )

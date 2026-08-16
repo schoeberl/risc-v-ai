@@ -1,0 +1,18 @@
+DESIGN_NAME: CachedPipelinedRiscVCore
+VERILOG_FILES:
+  - dir::../../generated/CacheArbiter.sv
+  - dir::../../generated/InstructionCache.sv
+  - dir::../../generated/DataCache.sv
+  - dir::../../generated/IterativeDivider.sv
+  - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
+  - dir::../../generated/PipelinedRiscVCore.sv
+  - dir::../../generated/CachedPipelinedRiscVCore.sv
+
+CLOCK_PORT: clock
+CLOCK_PERIOD: 10.0
+SYNTH_HIERARCHY_MODE: deferred_flatten
+
+pdk::sky130A:
+  FP_CORE_UTIL: 40
+  STD_CELL_LIBRARY: sky130_fd_sc_hd

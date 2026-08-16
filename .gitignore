@@ -6,6 +6,7 @@
 .vscode/
 build/
 generated/
+generated-sky130-cache/
 ppa/librelane/runs/
 project/project/
 project/target/

@@ -26,5 +26,12 @@ print(f"setup WNS:     {wns:.5f} ns")
 print(f"implied Fmax:  {fmax_mhz:.2f} MHz")
 print(f"setup TNS:     {metrics['timing__setup__tns']:.3f} ns")
 print(f"std-cell area: {metrics['design__instance__area__stdcell']:.0f} um^2")
+macro_area = metrics.get("design__instance__area__macros", 0.0)
+if macro_area:
+    print(f"macro area:    {macro_area:.0f} um^2")
+    print(
+        "cell+macro:    "
+        f"{metrics['design__instance__area__stdcell'] + macro_area:.0f} um^2"
+    )
 print(f"instances:     {metrics['design__instance__count']}")
 print(f"power:         {metrics['power__total'] * 1000.0:.3f} mW")

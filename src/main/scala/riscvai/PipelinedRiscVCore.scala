@@ -47,9 +47,13 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
     val dataAddress = Output(UInt(32.W))
     val dataReadData = Input(UInt(32.W))
+    val dataReadEnable = Output(Bool())
     val dataWriteData = Output(UInt(32.W))
     val dataWriteEnable = Output(Bool())
     val dataWriteMask = Output(UInt(4.W))
+
+    val memoryStall = Input(Bool())
+    val instructionCacheInvalidate = Output(Bool())
 
     val illegalInstruction = Output(Bool())
     val pipelineStall = Output(Bool())
@@ -100,7 +104,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   private val csrs = Module(new MachineCsrs)
   private val divider = Module(new IterativeDivider)
   private val multiplier = Module(new PipelinedMultiplier)
-  val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal
+  val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal &&
+    !io.memoryStall
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
@@ -122,7 +127,7 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   )
   val writebackActive = executeMemoryWriteback.valid &&
     executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
-    executeMemoryWriteback.rd =/= 0.U
+    executeMemoryWriteback.rd =/= 0.U && !io.memoryStall
 
   when(writebackActive) {
     registers(executeMemoryWriteback.rd) := writebackData
@@ -172,6 +177,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.memoryWrite && !executeMemoryWriteback.illegal && atomicStoreAllowed
 
   io.dataAddress := executeMemoryWriteback.address & "hfffffffc".U
+  io.dataReadEnable := executeMemoryWriteback.valid &&
+    executeMemoryWriteback.memoryRead && !executeMemoryWriteback.illegal
   io.dataWriteData := Mux(
     executeMemoryWriteback.atomicValid,
     Mux(
@@ -188,9 +195,13 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   )
   io.dataWriteEnable := dataWriteActive
   io.illegalInstruction := illegalTrap
-  io.retiredValid := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal
+  io.retiredValid := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
+    !io.memoryStall
   io.retiredPc := executeMemoryWriteback.pc
   io.retiredInstruction := executeMemoryWriteback.instruction
+  io.instructionCacheInvalidate := io.retiredValid &&
+    executeMemoryWriteback.instruction(6, 0) === OpcodeMiscMem &&
+    executeMemoryWriteback.instruction(14, 12) === "b001".U
   io.debugRegisterData := Mux(
     io.debugRegisterAddress === 0.U,
     0.U,
@@ -244,7 +255,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   csrs.io.address := instruction(31, 20)
   csrs.io.writeData := csrWriteData
-  csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal
+  csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
+    !io.memoryStall
   csrs.io.trapEnter := illegalTrap
   csrs.io.trapPc := executeMemoryWriteback.pc
   csrs.io.trapCause := 2.U // Illegal instruction
@@ -518,14 +530,15 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     registerWrite && !illegal && (memoryRead || atomicValid) && rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))
   val executionStall = divideStall || multiplyStall
-  val pipelineStall = executionStall || unavailableResultHazard
+  val pipelineStall = io.memoryStall || executionStall || unavailableResultHazard
   io.pipelineStall := pipelineStall
 
   val executeRedirect = redirect && decodeExecute.valid && !illegal
   val legalCsrWrite = decodeExecute.valid && opcode === OpcodeSystem &&
     validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
-  val mretActive = decodeExecute.valid && isMret && !executionStall && !illegalTrap
-  csrs.io.writeEnable := legalCsrWrite && !executionStall && !illegalTrap
+  val mretActive = decodeExecute.valid && isMret && !executionStall &&
+    !io.memoryStall && !illegalTrap
+  csrs.io.writeEnable := legalCsrWrite && !executionStall && !io.memoryStall && !illegalTrap
   csrs.io.mret := mretActive
 
   when(illegalTrap) {
@@ -533,6 +546,8 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     decodeExecute.valid := false.B
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
+  }.elsewhen(io.memoryStall) {
+    // Hold every stage until the cache hierarchy completes the outstanding access.
   }.elsewhen(executionStall) {
     // Let the older instruction retire while execute, decode, and fetch hold.
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
@@ -574,12 +589,14 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
 
   val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
     !executeMemoryWriteback.illegal
-  when(illegalTrap || mretActive || io.dataWriteEnable ||
-    (retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicSc)) {
-    reservationValid := false.B
-  }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {
-    reservationValid := true.B
-    reservationAddress := executeMemoryWriteback.address & "hfffffffc".U
+  when(!io.memoryStall) {
+    when(illegalTrap || mretActive || io.dataWriteEnable ||
+      (retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicSc)) {
+      reservationValid := false.B
+    }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {
+      reservationValid := true.B
+      reservationAddress := executeMemoryWriteback.address & "hfffffffc".U
+    }
   }
 
   // Payload registers are ignored until their corresponding valid bit is set.

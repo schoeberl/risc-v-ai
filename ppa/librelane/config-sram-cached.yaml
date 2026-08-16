@@ -1,0 +1,51 @@
+DESIGN_NAME: Sky130CachedPipelinedRiscVCore
+VERILOG_FILES:
+  - dir::../../generated/CacheArbiter.sv
+  - dir::../../generated/DataCache.sv
+  - dir::../../generated/InstructionCache.sv
+  - dir::../../generated/IterativeDivider.sv
+  - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
+  - dir::../../generated/PipelinedRiscVCore.sv
+  - dir::../../generated/Sky130CacheDataMemory.sv
+  - dir::../../generated/Sky130CachedPipelinedRiscVCore.sv
+
+CLOCK_PORT: clock
+CLOCK_PERIOD: 10.0
+SYNTH_HIERARCHY_MODE: deferred_flatten
+
+VDD_NETS: [vccd1]
+GND_NETS: [vssd1]
+PDN_CORE_RING: true
+PDN_MACRO_CONNECTIONS:
+  - ".*instructionCache.*sram vccd1 vssd1 vccd1 vssd1"
+  - ".*dataCache.*sram vccd1 vssd1 vccd1 vssd1"
+
+FP_SIZING: absolute
+DIE_AREA: [0, 0, 1600, 1200]
+CORE_AREA: [20, 20, 1580, 1180]
+FP_CORE_UTIL: 40
+
+MACROS:
+  sky130_sram_1kbyte_1rw1r_32x256_8:
+    instances:
+      instructionCache.data_memory.sram:
+        location: [100, 100]
+        orientation: N
+      dataCache.data_memory.sram:
+        location: [800, 100]
+        orientation: N
+    gds:
+      - pdk_dir::libs.ref/sky130_sram_macros/gds/sky130_sram_1kbyte_1rw1r_32x256_8.gds
+    lef:
+      - pdk_dir::libs.ref/sky130_sram_macros/lef/sky130_sram_1kbyte_1rw1r_32x256_8.lef
+    nl:
+      - pdk_dir::libs.ref/sky130_sram_macros/verilog/sky130_sram_1kbyte_1rw1r_32x256_8.v
+    lib:
+      "*":
+        - pdk_dir::libs.ref/sky130_sram_macros/lib/sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib
+
+pdk::sky130A:
+  STD_CELL_LIBRARY: sky130_fd_sc_hd
+
+RUN_KLAYOUT_XOR: false
