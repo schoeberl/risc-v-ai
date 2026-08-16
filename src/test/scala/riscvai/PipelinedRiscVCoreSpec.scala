@@ -204,7 +204,9 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
         var dividerStalls = 0
-        for (_ <- 0 until 300) {
+        // Run long enough for the final overflow remainder to retire. An
+        // unwritten destination register has no defined post-reset value.
+        for (_ <- 0 until 340) {
           if (runCycle(dut, program, memory)) dividerStalls += 1
         }
 

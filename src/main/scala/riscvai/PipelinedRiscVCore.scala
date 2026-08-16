@@ -84,11 +84,11 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
     Cat(Fill(32 - width, value(width - 1)), value)
 
   val fetchPc = RegInit(resetVector.U(32.W))
-  private val fetchDecodeExecute = RegInit(0.U.asTypeOf(new FetchDecodeExecute))
-  private val executeMemoryWriteback = RegInit(0.U.asTypeOf(new ExecuteMemoryWriteback))
-  val registers = RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
+  private val fetchDecodeExecute = Reg(new FetchDecodeExecute)
+  private val executeMemoryWriteback = Reg(new ExecuteMemoryWriteback)
+  val registers = Reg(Vec(32, UInt(32.W)))
   val reservationValid = RegInit(false.B)
-  val reservationAddress = RegInit(0.U(32.W))
+  val reservationAddress = Reg(UInt(32.W))
   private val csrs = Module(new MachineCsrs)
   private val divider = Module(new IterativeDivider)
   private val multiplier = Module(new PipelinedMultiplier)
@@ -548,5 +548,12 @@ class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
   }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {
     reservationValid := true.B
     reservationAddress := executeMemoryWriteback.address & "hfffffffc".U
+  }
+
+  // Payload registers are ignored until their corresponding valid bit is set.
+  // Reset only the validity state so the datapath can use reset-free flops.
+  when(reset.asBool) {
+    fetchDecodeExecute.valid := false.B
+    executeMemoryWriteback.valid := false.B
   }
 }

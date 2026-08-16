@@ -19,15 +19,15 @@ private class IterativeDivider extends Module {
 
   private val busy = RegInit(false.B)
   private val done = RegInit(false.B)
-  private val count = RegInit(0.U(5.W))
-  private val divisor = RegInit(0.U(32.W))
-  private val quotient = RegInit(0.U(32.W))
-  private val remainder = RegInit(0.U(33.W))
-  private val negateQuotient = RegInit(false.B)
-  private val negateRemainder = RegInit(false.B)
-  private val divisorZero = RegInit(false.B)
-  private val quotientResult = RegInit(0.U(32.W))
-  private val remainderResult = RegInit(0.U(32.W))
+  private val count = Reg(UInt(5.W))
+  private val divisor = Reg(UInt(32.W))
+  private val quotient = Reg(UInt(32.W))
+  private val remainder = Reg(UInt(33.W))
+  private val negateQuotient = Reg(Bool())
+  private val negateRemainder = Reg(Bool())
+  private val divisorZero = Reg(Bool())
+  private val quotientResult = Reg(UInt(32.W))
+  private val remainderResult = Reg(UInt(32.W))
 
   private def twosComplement(value: UInt): UInt = (~value).asUInt + 1.U
 

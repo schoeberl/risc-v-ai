@@ -24,22 +24,22 @@ private class PipelinedMultiplier extends Module {
   private val valid4 = RegInit(false.B)
   private val valid5 = RegInit(false.B)
 
-  private val lhsMagnitude1 = RegInit(0.U(32.W))
-  private val rhsMagnitude1 = RegInit(0.U(32.W))
-  private val negative1 = RegInit(false.B)
-  private val highResultReg = RegInit(false.B)
+  private val lhsMagnitude1 = Reg(UInt(32.W))
+  private val rhsMagnitude1 = Reg(UInt(32.W))
+  private val negative1 = Reg(Bool())
+  private val highResultReg = Reg(Bool())
 
-  private val partial00 = RegInit(0.U(32.W))
-  private val partial01 = RegInit(0.U(32.W))
-  private val partial10 = RegInit(0.U(32.W))
-  private val partial11 = RegInit(0.U(32.W))
-  private val negative2 = RegInit(false.B)
+  private val partial00 = Reg(UInt(32.W))
+  private val partial01 = Reg(UInt(32.W))
+  private val partial10 = Reg(UInt(32.W))
+  private val partial11 = Reg(UInt(32.W))
+  private val negative2 = Reg(Bool())
 
-  private val lowerSum = RegInit(0.U(64.W))
-  private val upperSum = RegInit(0.U(64.W))
-  private val negative3 = RegInit(false.B)
-  private val product = RegInit(0.U(64.W))
-  private val result = RegInit(0.U(32.W))
+  private val lowerSum = Reg(UInt(64.W))
+  private val upperSum = Reg(UInt(64.W))
+  private val negative3 = Reg(Bool())
+  private val product = Reg(UInt(64.W))
+  private val result = Reg(UInt(32.W))
 
   private def twosComplement(value: UInt): UInt = (~value).asUInt + 1.U
 
