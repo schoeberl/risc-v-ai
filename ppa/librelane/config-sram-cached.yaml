@@ -14,14 +14,15 @@ VERILOG_FILES:
 CLOCK_PORT: clock
 CLOCK_PERIOD: 10.0
 RUN_POST_GPL_DESIGN_REPAIR: false
+RUN_POST_CTS_RESIZER_TIMING: false
 SYNTH_HIERARCHY_MODE: deferred_flatten
 
 VDD_NETS: [vccd1]
 GND_NETS: [vssd1]
 PDN_CORE_RING: true
 PDN_MACRO_CONNECTIONS:
-  - ".*instructionCache.*sram vccd1 vssd1 vccd1 vssd1"
-  - ".*dataCache.*sram vccd1 vssd1 vccd1 vssd1"
+  - ".*instructionCache.*sram vccd1 vssd1 (vpwrm|vpwra|vpwrp|vpb) (vgnd|vnb)"
+  - ".*dataCache.*sram vccd1 vssd1 (vpwrm|vpwra|vpwrp|vpb) (vgnd|vnb)"
 
 FP_SIZING: absolute
 DIE_AREA: [0, 0, 1600, 1200]
@@ -29,7 +30,7 @@ CORE_AREA: [20, 20, 1580, 1180]
 FP_CORE_UTIL: 40
 
 MACROS:
-  sky130_sram_1kbyte_1rw1r_32x256_8:
+  CF_SRAM_1024x32:
     instances:
       instructionCache.data_memory.sram:
         location: [100, 100]
@@ -38,14 +39,18 @@ MACROS:
         location: [800, 100]
         orientation: N
     gds:
-      - pdk_dir::libs.ref/sky130_sram_macros/gds/sky130_sram_1kbyte_1rw1r_32x256_8.gds
+      - dir::../../ip/CF_SRAM_1024x32/gds/CF_SRAM_1024x32.gds
     lef:
-      - pdk_dir::libs.ref/sky130_sram_macros/lef/sky130_sram_1kbyte_1rw1r_32x256_8.lef
+      - dir::../../ip/CF_SRAM_1024x32/lef/CF_SRAM_1024x32.lef
     nl:
-      - pdk_dir::libs.ref/sky130_sram_macros/verilog/sky130_sram_1kbyte_1rw1r_32x256_8.v
+      - dir::../../ip/CF_SRAM_1024x32/hdl/CF_SRAM_1024x32.v
     lib:
-      "*":
-        - pdk_dir::libs.ref/sky130_sram_macros/lib/sky130_sram_1kbyte_1rw1r_32x256_8_TT_1p8V_25C.lib
+      "*_tt_025C_1v80":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_tt_180V_25C.lib
+      "*_ss_100C_1v60":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_ss_160V_100C.lib
+      "*_ff_n40C_1v95":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_ff_195V_n40C.lib
 
 pdk::sky130A:
   STD_CELL_LIBRARY: sky130_fd_sc_hd

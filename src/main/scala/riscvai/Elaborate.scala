@@ -80,7 +80,6 @@ object ElaborateSky130CachedThreeStages extends App {
   )
 }
 
-
 /** Emits the cached three-stage predecode comparison with Sky130 SRAM macros. */
 object ElaborateSky130CachedThreeStagesPredecode extends App {
   ChiselStage.emitSystemVerilogFile(

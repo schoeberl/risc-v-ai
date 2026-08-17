@@ -4,9 +4,11 @@
 .metals/
 .scala-build/
 .vscode/
+.venv-cf-ipm/
 build/
 generated/
 generated-sky130-cache/
+ip/
 ppa/librelane/runs/
 project/project/
 project/target/

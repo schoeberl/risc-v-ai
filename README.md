@@ -160,16 +160,26 @@ There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
 The default cached tops infer synchronous memories, which FPGA tools can map to
-block RAM. `Sky130CachedRvaiFourStages` and `Sky130CachedRvaiThreeStages` instead
-instantiate two
-`sky130_sram_1kbyte_1rw1r_32x256_8` OpenRAM macros, one for each cache. Port 1 is
-the lookup port; port 0 performs byte-masked store updates and full-word
-refills. Architecturally, each macro is treated as a synchronous black box: its
-address is driven from the next address before the rising-edge pipeline boundary,
-and its late-cycle output is captured at that boundary. The OpenRAM Liberty model
-describes some internal timing arcs using a falling edge; that is a physical
-macro timing constraint, not an extra processor pipeline stage. The data macro's
-output is captured in the cache before it reaches the core.
+block RAM. All three `Sky130CachedRvai*` tops instead instantiate two
+single-port, rising-edge synchronous `CF_SRAM_1024x32` macros. Reads and writes
+do not overlap architecturally: a
+refill or resident-store update takes port priority while its speculative read
+result is ignored. The caches remain 1 KiB and tie the macro's upper two address
+bits low; increasing both caches to the full 4 KiB capacity is a separate
+experiment. There are no OpenRAM macro instances in the current RTL or physical
+flow configurations.
+
+Install the licensed macro into ignored project-local directories with a Python
+virtual environment:
+
+```sh
+python3 -m venv .venv-cf-ipm
+.venv-cf-ipm/bin/python -m pip install cf-ipm
+.venv-cf-ipm/bin/ipm install CF_SRAM_1024x32 --ip-root "$PWD/ip"
+```
+
+The downloaded `ip/` tree is intentionally excluded from Git. Consult the
+license shipped with the package before using or redistributing its views.
 
 ## RTL and Sky130 PPA
 
@@ -220,19 +230,19 @@ LibreLane flows including both cache SRAMs with:
 
 ```sh
 make ppa-sky130-sram-cached \
-  PPA_RUN_TAG=four-stages-no-repair-comparison-100mhz
+  PPA_RUN_TAG=cf-pipelines-four-100mhz
 python3 ppa/librelane/report_metrics.py \
-  four-stages-no-repair-comparison-100mhz
+  cf-pipelines-four-100mhz
 
 make ppa-sky130-sram-cached-three-stages \
-  PPA_RUN_TAG=three-stages-registered-cache-decisions-no-repair-100mhz
+  PPA_RUN_TAG=cf-pipelines-three-100mhz
 python3 ppa/librelane/report_metrics.py \
-  three-stages-registered-cache-decisions-no-repair-100mhz
+  cf-pipelines-three-100mhz
 
 make ppa-sky130-sram-cached-three-stages-predecode \
-  PPA_RUN_TAG=three-stages-m-predecode-openram-100mhz
+  PPA_RUN_TAG=cf-pipelines-three-predecode-100mhz
 python3 ppa/librelane/report_metrics.py \
-  three-stages-m-predecode-openram-100mhz
+  cf-pipelines-three-predecode-100mhz
 ```
 
 By default, the Make target uses LibreLane from `~/librelane` and the PDK from
@@ -240,53 +250,59 @@ By default, the Make target uses LibreLane from `~/librelane` and the PDK from
 elsewhere. LibreLane run data is written below `ppa/librelane/runs/` and is not
 tracked by Git.
 
+### SRAM backend change
+
+The following records the one-time memory-backend comparison on the three-stage
+pipeline. It is retained for provenance; current source and PPA configurations
+contain only the CF SRAM backend.
+
+| Metric | Previous OpenRAM | Current CF SRAM | Change |
+|---|---:|---:|---:|
+| Estimated Fmax | 31.98 MHz | 45.49 MHz | +42.2% |
+| Setup TNS | -12,509.700 ns | -14,145.200 ns | 13.1% greater magnitude |
+| Standard-cell area | 387,875 µm² | 391,085 µm² | +0.8% |
+| Two SRAM macro area | 381,425 µm² | 237,978 µm² | -37.6% |
+| Combined area | 769,300 µm² | 629,063 µm² | -18.2% |
+| Standard-cell instances | 49,235 | 51,402 | +4.4% |
+| Total placed instances | 50,703 | 52,738 | +4.0% |
+| Power | 44.234 mW | 52.231 mW | +18.1% |
+
+The old Fmax was limited by an internal falling-edge timing check in the OpenRAM
+model. The CF macro replaces that half-cycle constraint with normal rising-edge
+setup and clock-to-data arcs. Its higher modeled power is the principal cost;
+the two macros are substantially smaller even though each physical macro has
+4 KiB capacity and the current cache uses only 1 KiB.
+
 ### Cache-inclusive pipeline comparison
 
-This table tracks pipeline comparisons only when both 1 KiB OpenRAM-backed
-caches, their control, and the shared arbiter are included. All entries use
-LibreLane Classic, Sky130A `sky130_fd_sc_hd`, identical 1600 µm by 1200 µm
-floorplans, a 10 ns clock target, and the nominal-corner post-CTS state. All
-flows skip post-global-placement design repair because the OpenRAM Liberty model
-requires a 40 ps maximum transition on address pins while the best available
-standard-cell drive in this setup is 43 ps. CTS and post-CTS STA still run.
+This table compares only pipeline organization: every entry includes the same
+two 1 KiB CF-SRAM-backed caches, cache control, and shared arbiter. All entries
+use LibreLane Classic, Sky130A `sky130_fd_sc_hd`, identical 1600 µm by 1200 µm
+floorplans, a 10 ns clock target, and the nominal-corner post-CTS state. The
+flows skip post-global-placement design repair and post-CTS resizer optimization
+so an unattainable 100 MHz target does not distort area with repair buffers.
 
 | Metric | Four stages | Three stages | Three stages + fetch predecode |
 |---|---:|---:|---:|
-| Setup WNS | -8.565 ns | -10.892 ns | -13.103 ns |
-| Instruction-SRAM half-cycle WNS | -8.565 ns | -10.635 ns | -12.338 ns |
-| Estimated Fmax | 36.86 MHz | 31.98 MHz | 28.84 MHz |
-| Setup TNS | -13,743.700 ns | -12,509.700 ns | -19,439.200 ns |
+| Setup WNS | -10.300 ns | -11.984 ns | -13.075 ns |
+| Estimated Fmax | 49.26 MHz | 45.49 MHz | 43.34 MHz |
+| Setup TNS | -15,096.700 ns | -14,145.200 ns | -17,866.000 ns |
 | Die size | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm |
-| Standard-cell area | 395,338 µm² | 387,875 µm² | 388,941 µm² |
-| Two SRAM macro area | 381,425 µm² | 381,425 µm² | 381,425 µm² |
-| Combined area | 776,763 µm² | 769,300 µm² | 770,366 µm² |
-| Standard-cell instances | 49,693 | 49,235 | 49,281 |
-| Total placed instances | 51,161 | 50,703 | 50,749 |
+| Standard-cell area | 397,705 µm² | 391,085 µm² | 391,702 µm² |
+| Two SRAM macro area | 237,978 µm² | 237,978 µm² | 237,978 µm² |
+| Combined area | 635,683 µm² | 629,063 µm² | 629,680 µm² |
+| Standard-cell instances | 51,792 | 51,402 | 51,459 |
+| Total placed instances | 53,128 | 52,738 | 52,795 |
 | Sequential cells | 5,509 | 5,380 | 5,384 |
-| Power | 45.111 mW | 44.234 mW | 44.479 mW |
+| Power | 53.072 mW | 52.231 mW | 52.089 mW |
 
-The four-stage worst path is from an instruction-tag register to an internal
-falling-edge timing check on the instruction SRAM. This is not an architectural
-stage, but it gives the address logic only half a clock period in the supplied
-macro model. Holding delay and uncertainty constant, its minimum-period estimate
-is `2 * (5 - WNS)`, or 36.86 MHz; the report script's ordinary full-cycle result
-of 53.87 MHz is not applicable to this path. The three-stage design's most
-negative slack is on a normal rising-edge-to-rising-edge path through the
-combined decode/execute logic to the iterative divider. However, its slightly
-less negative -10.635 ns instruction-SRAM path improves by only half a nanosecond
-for each nanosecond added to the clock period. It therefore sets the lower
-estimated Fmax of 31.98 MHz. Power is the post-CTS estimate at the requested
-100 MHz activity point, even though none of the designs closes timing at 100 MHz.
-
-The fetch-predecode experiment registers source-usage and multiply/divide
-classification, adding four pipeline bits. Its most negative full-cycle path now
-runs from memory/writeback control through the PC/cache/instruction feedback into
-a fetch-predecode register and has -13.103 ns slack. The instruction-SRAM
-half-cycle path has -12.338 ns slack and sets the lower effective estimate of
-28.84 MHz. Relative to the three-stage baseline this is a 9.8% Fmax regression,
-while standard-cell area increases by 0.27% and estimated power increases by
-0.55%. The module is retained as a separate organization so later predecode
-boundaries can be compared without changing the baseline.
+The CF SRAM model uses rising-edge address and data timing, so all three Fmax
+values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. The four-stage
+organization is fastest. Moving decode into execute reduces Fmax by 7.7% while
+reducing combined area by 1.0% and power by 1.6%. Moving limited predecode work
+back into fetch reduces Fmax by a further 4.7% with essentially unchanged area
+and power. Power is estimated at the requested 100 MHz activity point even
+though none of the designs closes timing at 100 MHz.
 
 The three-stage data-cache controller registers the synchronous tag decision and
 uses a lookup wait state. Consequently a data-cache read hit takes an extra cycle

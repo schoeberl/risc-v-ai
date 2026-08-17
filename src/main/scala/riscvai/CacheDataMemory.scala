@@ -36,48 +36,68 @@ private[riscvai] class InferredCacheDataMemory(depth: Int)
   }
 }
 
-/** Installed OpenRAM 1 KiB Sky130 SRAM hard macro. */
-private[riscvai] class Sky130Sram1Kbyte extends BlackBox {
-  override def desiredName: String = "sky130_sram_1kbyte_1rw1r_32x256_8"
+/** ChipFoundry 4 KiB single-port synchronous Sky130 SRAM hard macro. */
+private[riscvai] class ChipFoundrySram1024x32 extends BlackBox {
+  override def desiredName: String = "CF_SRAM_1024x32"
 
   val io = IO(new Bundle {
-    val clk0 = Input(Clock())
-    val csb0 = Input(Bool())
-    val web0 = Input(Bool())
-    val wmask0 = Input(UInt(4.W))
-    val addr0 = Input(UInt(8.W))
-    val din0 = Input(UInt(32.W))
-    val dout0 = Output(UInt(32.W))
-    val clk1 = Input(Clock())
-    val csb1 = Input(Bool())
-    val addr1 = Input(UInt(8.W))
-    val dout1 = Output(UInt(32.W))
+    val DO = Output(UInt(32.W))
+    val ScanOutCC = Output(Bool())
+    val AD = Input(UInt(10.W))
+    val BEN = Input(UInt(32.W))
+    val CLKin = Input(Clock())
+    val DI = Input(UInt(32.W))
+    val EN = Input(Bool())
+    val R_WB = Input(Bool())
+    val ScanInCC = Input(Bool())
+    val ScanInDL = Input(Bool())
+    val ScanInDR = Input(Bool())
+    val SM = Input(Bool())
+    val TM = Input(Bool())
+    val WLBI = Input(Bool())
+    val WLOFF = Input(Bool())
+    val vpwrac = Input(Bool())
+    val vpwrpc = Input(Bool())
   })
 }
 
-/** ASIC implementation backed by the installed 256x32 Sky130 SRAM macro. */
+/** ASIC cache storage backed by a CF_SRAM_1024x32. A cache may use a prefix of
+  * the macro; the current 1 KiB caches use its first 256 words.
+  */
 private[riscvai] class Sky130CacheDataMemory(depth: Int)
     extends CacheDataMemory(depth) {
-  require(depth == 256, "the installed Sky130 cache SRAM contains exactly 256 words")
-  private val sram = Module(new Sky130Sram1Kbyte)
+  require(depth <= 1024, "CF_SRAM_1024x32 contains at most 1024 words")
+
+  private val sram = Module(new ChipFoundrySram1024x32)
   sram.suggestName("sram")
 
-  sram.io.clk0 := clock
-  sram.io.csb0 := !io.writeEnable
-  sram.io.web0 := false.B
-  sram.io.wmask0 := io.writeMask
-  sram.io.addr0 := io.writeAddress
-  sram.io.din0 := io.writeData
+  // The cache never consumes read data in a write cycle. Writes therefore take
+  // priority when the generic 1R/1W cache interface requests both operations.
+  private val writeSelected = io.writeEnable
+  private val address = Mux(writeSelected, io.writeAddress, io.readAddress)
 
-  sram.io.clk1 := clock
-  sram.io.csb1 := !io.readEnable
-  sram.io.addr1 := io.readAddress
-  io.readData := sram.io.dout1
+  sram.io.AD := address.pad(10)
+  sram.io.BEN := FillInterleaved(8, io.writeMask)
+  sram.io.CLKin := clock
+  sram.io.DI := io.writeData
+  sram.io.EN := io.readEnable || io.writeEnable
+  sram.io.R_WB := !writeSelected
+  sram.io.ScanInCC := false.B
+  sram.io.ScanInDL := false.B
+  sram.io.ScanInDR := false.B
+  sram.io.SM := false.B
+  sram.io.TM := false.B
+  sram.io.WLBI := false.B
+  sram.io.WLOFF := false.B
+  // Default non-power-switched mode requires both controls tied to the supply.
+  sram.io.vpwrac := true.B
+  sram.io.vpwrpc := true.B
+  io.readData := sram.io.DO
 }
 
 private[riscvai] object CacheDataMemory {
-  def apply(depth: Int, useSky130Sram: Boolean): CacheDataMemoryIO = {
-    val memory: CacheDataMemory = if (useSky130Sram) {
+  def apply(depth: Int, useAsicSram: Boolean): CacheDataMemoryIO = {
+    val memory: CacheDataMemory = if (useAsicSram) {
       Module(new Sky130CacheDataMemory(depth))
     } else {
       Module(new InferredCacheDataMemory(depth))

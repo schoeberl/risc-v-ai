@@ -16,7 +16,7 @@ private object CacheGeometry {
 private[riscvai] class InstructionCache(
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false
+    useAsicSram: Boolean = false
 )
     extends Module {
   CacheGeometry.validate(cacheBytes, lineBytes)
@@ -46,7 +46,7 @@ private[riscvai] class InstructionCache(
   private val state = RegInit(State.prime)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
   private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
-  private val data = CacheDataMemory(wordCount, useSky130Sram)
+  private val data = CacheDataMemory(wordCount, useAsicSram)
   private val requestIndex = Reg(UInt(indexBits.W))
   private val requestTag = Reg(UInt(tagBits.W))
   private val missBase = Reg(UInt(32.W))
@@ -133,7 +133,7 @@ private[riscvai] class InstructionCache(
 private[riscvai] class DataCache(
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false,
+    useAsicSram: Boolean = false,
     registeredTagHit: Boolean = true
 )
     extends Module {
@@ -172,7 +172,7 @@ private[riscvai] class DataCache(
   private val state = RegInit(State.idle)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
   private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
-  private val data = CacheDataMemory(wordCount, useSky130Sram)
+  private val data = CacheDataMemory(wordCount, useAsicSram)
 
   private val missBase = Reg(UInt(32.W))
   private val missIndex = Reg(UInt(indexBits.W))

@@ -9,7 +9,7 @@ class CachedRvaiPipeline(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false,
+    useAsicSram: Boolean = false,
     threeStages: Boolean = false,
     predecodeInFetch: Boolean = false
 ) extends Module {
@@ -41,11 +41,15 @@ class CachedRvaiPipeline(
     Module(new RvaiFourStages(resetVector))
   }
   private val instructionCache =
-    Module(new InstructionCache(cacheBytes, lineBytes, useSky130Sram))
+    Module(new InstructionCache(
+      cacheBytes,
+      lineBytes,
+      useAsicSram
+    ))
   private val dataCache = Module(new DataCache(
     cacheBytes,
     lineBytes,
-    useSky130Sram,
+    useAsicSram,
     registeredTagHit = !threeStages
   ))
   private val arbiter = Module(new CacheArbiter)
@@ -98,12 +102,12 @@ class CachedRvaiFourStages(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false
+    useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
       resetVector,
       cacheBytes,
       lineBytes,
-      useSky130Sram,
+      useAsicSram,
       threeStages = false
     )
 
@@ -112,12 +116,12 @@ class CachedRvaiThreeStages(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false
+    useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
       resetVector,
       cacheBytes,
       lineBytes,
-      useSky130Sram,
+      useAsicSram,
       threeStages = true
     )
 
@@ -126,39 +130,39 @@ class CachedRvaiThreeStagesPredecode(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false
+    useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
       resetVector,
       cacheBytes,
       lineBytes,
-      useSky130Sram,
+      useAsicSram,
       threeStages = true,
       predecodeInFetch = true
     )
 
-/** Sky130 implementation with one installed 1 KiB OpenRAM macro per cache. */
+/** Sky130 implementation with one CF_SRAM_1024x32 macro per cache. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,
-      useSky130Sram = true
+      useAsicSram = true
     )
 
-/** Three-stage Sky130 implementation with one installed OpenRAM macro per cache. */
+/** Three-stage Sky130 implementation with one CF_SRAM_1024x32 per cache. */
 class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
     extends CachedRvaiThreeStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,
-      useSky130Sram = true
+      useAsicSram = true
     )
 
-/** Three-stage predecode comparison using installed OpenRAM macros. */
+/** Three-stage predecode implementation using CF_SRAM_1024x32 macros. */
 class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesPredecode(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,
-      useSky130Sram = true
+      useAsicSram = true
     )
