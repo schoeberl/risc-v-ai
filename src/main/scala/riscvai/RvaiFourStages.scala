@@ -7,6 +7,10 @@ private class FetchDecodeExecute extends Bundle {
   val valid = Bool()
   val pc = UInt(32.W)
   val instruction = UInt(32.W)
+  val usesRs1 = Bool()
+  val usesRs2 = Bool()
+  val divide = Bool()
+  val multiply = Bool()
 }
 
 private class DecodeExecute extends Bundle {
@@ -36,10 +40,19 @@ private class ExecuteMemoryWriteback extends Bundle {
 
 /** A configurable, single-issue RV32IMA_Zicsr_Zifencei pipeline.
   *
-  * Concrete classes select whether decode and execute are separate stages at
-  * elaboration time.
+  * Concrete classes select whether decode and execute are separate stages and
+  * whether selected control predecode is performed in fetch at elaboration time.
   */
-class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends Module {
+class RvaiPipeline(
+    resetVector: BigInt,
+    separateDecodeExecute: Boolean,
+    predecodeInFetch: Boolean = false
+) extends Module {
+  require(
+    !predecodeInFetch || !separateDecodeExecute,
+    "fetch predecode is currently supported only by a combined decode/execute stage"
+  )
+
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
     val instructionNextAddress = Output(UInt(32.W))
@@ -82,6 +95,16 @@ class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends 
   private val OpcodeJalr = "b1100111".U(7.W)
   private val OpcodeJal = "b1101111".U(7.W)
   private val OpcodeSystem = "b1110011".U(7.W)
+
+  private def instructionUsesRs1Opcode(opcode: UInt, funct3: UInt): Bool =
+    opcode === OpcodeJalr || opcode === OpcodeBranch || opcode === OpcodeLoad ||
+      opcode === OpcodeStore || opcode === OpcodeOpImm || opcode === OpcodeOp ||
+      opcode === OpcodeAtomic ||
+      (opcode === OpcodeSystem && !funct3(2) && funct3 =/= 0.U)
+
+  private def instructionUsesRs2Opcode(opcode: UInt): Bool =
+    opcode === OpcodeBranch || opcode === OpcodeStore || opcode === OpcodeOp ||
+      opcode === OpcodeAtomic
 
   private val AtomicAdd = "b00000".U(5.W)
   private val AtomicSwap = "b00001".U(5.W)
@@ -252,10 +275,16 @@ class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends 
   } else {
     readExecuteRegister(rs2)
   }
-  val divideInstruction = executeValid && opcode === OpcodeOp &&
-    funct7 === "b0000001".U && funct3(2)
-  val multiplyInstruction = executeValid && opcode === OpcodeOp &&
-    funct7 === "b0000001".U && !funct3(2)
+  val divideInstruction = executeValid && (if (predecodeInFetch) {
+    fetchDecodeExecute.divide
+  } else {
+    opcode === OpcodeOp && funct7 === "b0000001".U && funct3(2)
+  })
+  val multiplyInstruction = executeValid && (if (predecodeInFetch) {
+    fetchDecodeExecute.multiply
+  } else {
+    opcode === OpcodeOp && funct7 === "b0000001".U && !funct3(2)
+  })
   val dividerStart = divideInstruction && !divider.io.busy && !divider.io.done &&
     !illegalTrap
   val multiplierStart = multiplyInstruction && !multiplier.io.busy && !multiplier.io.done &&
@@ -539,12 +568,16 @@ class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends 
   val decodeRs1 = decodeInstruction(19, 15)
   val decodeRs2 = decodeInstruction(24, 20)
   val decodeFunct3 = decodeInstruction(14, 12)
-  val decodeUsesRs1 = decodeOpcode === OpcodeJalr || decodeOpcode === OpcodeBranch ||
-    decodeOpcode === OpcodeLoad || decodeOpcode === OpcodeStore ||
-    decodeOpcode === OpcodeOpImm || decodeOpcode === OpcodeOp || decodeOpcode === OpcodeAtomic ||
-    (decodeOpcode === OpcodeSystem && !decodeFunct3(2) && decodeFunct3 =/= 0.U)
-  val decodeUsesRs2 = decodeOpcode === OpcodeBranch || decodeOpcode === OpcodeStore ||
-    decodeOpcode === OpcodeOp || decodeOpcode === OpcodeAtomic
+  val decodeUsesRs1 = if (predecodeInFetch) {
+    fetchDecodeExecute.usesRs1
+  } else {
+    instructionUsesRs1Opcode(decodeOpcode, decodeFunct3)
+  }
+  val decodeUsesRs2 = if (predecodeInFetch) {
+    fetchDecodeExecute.usesRs2
+  } else {
+    instructionUsesRs2Opcode(decodeOpcode)
+  }
 
   val executeForwardActive = if (separateDecodeExecute) {
     executeValid && registerWrite && !illegal && !memoryRead && !atomicValid && rd =/= 0.U
@@ -675,6 +708,18 @@ class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends 
       when(io.instructionValid) {
         fetchDecodeExecute.pc := fetchPc
         fetchDecodeExecute.instruction := io.instruction
+        val fetchedOpcode = io.instruction(6, 0)
+        val fetchedFunct3 = io.instruction(14, 12)
+        val fetchedFunct7 = io.instruction(31, 25)
+        fetchDecodeExecute.usesRs1 := instructionUsesRs1Opcode(
+          fetchedOpcode,
+          io.instruction(14, 12)
+        )
+        fetchDecodeExecute.usesRs2 := instructionUsesRs2Opcode(fetchedOpcode)
+        fetchDecodeExecute.divide := fetchedOpcode === OpcodeOp &&
+          fetchedFunct7 === "b0000001".U && fetchedFunct3(2)
+        fetchDecodeExecute.multiply := fetchedOpcode === OpcodeOp &&
+          fetchedFunct7 === "b0000001".U && !fetchedFunct3(2)
         fetchPc := fetchPc + 4.U
       }
     }

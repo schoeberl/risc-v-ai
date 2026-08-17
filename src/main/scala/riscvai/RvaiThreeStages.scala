@@ -10,3 +10,17 @@ package riscvai
   */
 class RvaiThreeStages(resetVector: BigInt = 0)
     extends RvaiPipeline(resetVector, separateDecodeExecute = false)
+
+/** A three-stage comparison variant that predecodes register-source usage and
+  * multiply/divide classification in fetch, before the fetch/decode-execute
+  * register.
+  *
+  * Register-file reads, forwarding, detailed function decode, and execution
+  * remain together in the second stage.
+  */
+class RvaiThreeStagesPredecode(resetVector: BigInt = 0)
+    extends RvaiPipeline(
+      resetVector,
+      separateDecodeExecute = false,
+      predecodeInFetch = true
+    )

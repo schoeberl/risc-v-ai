@@ -289,3 +289,10 @@ class CachedRvaiThreeStagesSpec
       new CachedRvaiThreeStages(cacheBytes = 256, lineBytes = 16),
       minimumRetirementsDuringMiss = 0
     )
+
+class CachedRvaiThreeStagesPredecodeSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiThreeStagesPredecode",
+      new CachedRvaiThreeStagesPredecode(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 0
+    )

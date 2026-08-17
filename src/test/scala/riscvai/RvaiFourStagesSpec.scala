@@ -417,3 +417,6 @@ abstract class RvaiPipelineSpec(coreName: String, generate: => RvaiPipeline)
 class RvaiFourStagesSpec extends RvaiPipelineSpec("RvaiFourStages", new RvaiFourStages)
 
 class RvaiThreeStagesSpec extends RvaiPipelineSpec("RvaiThreeStages", new RvaiThreeStages)
+
+class RvaiThreeStagesPredecodeSpec
+    extends RvaiPipelineSpec("RvaiThreeStagesPredecode", new RvaiThreeStagesPredecode)

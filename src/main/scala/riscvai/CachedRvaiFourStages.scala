@@ -10,8 +10,11 @@ class CachedRvaiPipeline(
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
     useSky130Sram: Boolean = false,
-    threeStages: Boolean = false
+    threeStages: Boolean = false,
+    predecodeInFetch: Boolean = false
 ) extends Module {
+  require(!predecodeInFetch || threeStages)
+
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
     val memoryWrite = Output(Bool())
@@ -30,7 +33,9 @@ class CachedRvaiPipeline(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = if (threeStages) {
+  private val core = if (predecodeInFetch) {
+    Module(new RvaiThreeStagesPredecode(resetVector))
+  } else if (threeStages) {
     Module(new RvaiThreeStages(resetVector))
   } else {
     Module(new RvaiFourStages(resetVector))
@@ -116,6 +121,21 @@ class CachedRvaiThreeStages(
       threeStages = true
     )
 
+/** Three-stage predecode variant with private caches and one shared bus. */
+class CachedRvaiThreeStagesPredecode(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useSky130Sram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useSky130Sram,
+      threeStages = true,
+      predecodeInFetch = true
+    )
+
 /** Sky130 implementation with one installed 1 KiB OpenRAM macro per cache. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
@@ -128,6 +148,15 @@ class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
 /** Three-stage Sky130 implementation with one installed OpenRAM macro per cache. */
 class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
     extends CachedRvaiThreeStages(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useSky130Sram = true
+    )
+
+/** Three-stage predecode comparison using installed OpenRAM macros. */
+class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
+    extends CachedRvaiThreeStagesPredecode(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

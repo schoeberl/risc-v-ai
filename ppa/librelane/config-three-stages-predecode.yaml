@@ -1,0 +1,13 @@
+DESIGN_NAME: RvaiThreeStagesPredecode
+VERILOG_FILES:
+  - dir::../../generated/IterativeDivider.sv
+  - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
+  - dir::../../generated/RvaiThreeStagesPredecode.sv
+
+CLOCK_PORT: clock
+CLOCK_PERIOD: 10.0
+
+pdk::sky130A:
+  FP_CORE_UTIL: 40
+  STD_CELL_LIBRARY: sky130_fd_sc_hd
