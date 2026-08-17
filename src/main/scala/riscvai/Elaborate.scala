@@ -2,10 +2,10 @@ package riscvai
 
 import circt.stage.ChiselStage
 
-/** Emits synthesis-ready SystemVerilog for the pipelined processor. */
+/** Emits synthesis-ready SystemVerilog for the four-stage processor. */
 object Elaborate extends App {
   ChiselStage.emitSystemVerilogFile(
-    new PipelinedRiscVCore,
+    new RvaiFourStages,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",
@@ -18,7 +18,7 @@ object Elaborate extends App {
 /** Emits the cached processor and its shared 32-bit memory interface. */
 object ElaborateCached extends App {
   ChiselStage.emitSystemVerilogFile(
-    new CachedPipelinedRiscVCore,
+    new CachedRvaiFourStages,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",
@@ -31,7 +31,7 @@ object ElaborateCached extends App {
 /** Emits the cached processor using installed Sky130 SRAM hard macros. */
 object ElaborateSky130Cached extends App {
   ChiselStage.emitSystemVerilogFile(
-    new Sky130CachedPipelinedRiscVCore,
+    new Sky130CachedRvaiFourStages,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",

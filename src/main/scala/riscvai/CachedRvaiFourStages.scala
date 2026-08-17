@@ -3,7 +3,7 @@ package riscvai
 import chisel3._
 
 /** Pipelined core with private 1 KiB instruction/data caches and one shared bus. */
-class CachedPipelinedRiscVCore(
+class CachedRvaiFourStages(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
@@ -27,7 +27,7 @@ class CachedPipelinedRiscVCore(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = Module(new PipelinedRiscVCore(resetVector))
+  private val core = Module(new RvaiFourStages(resetVector))
   private val instructionCache =
     Module(new InstructionCache(cacheBytes, lineBytes, useSky130Sram))
   private val dataCache = Module(new DataCache(cacheBytes, lineBytes, useSky130Sram))
@@ -77,8 +77,8 @@ class CachedPipelinedRiscVCore(
 }
 
 /** Sky130 implementation with one installed 1 KiB OpenRAM macro per cache. */
-class Sky130CachedPipelinedRiscVCore(resetVector: BigInt = 0)
-    extends CachedPipelinedRiscVCore(
+class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
+    extends CachedRvaiFourStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

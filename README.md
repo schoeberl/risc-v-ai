@@ -31,8 +31,10 @@ The project contains two 32-bit cores with the same separate instruction and
 data-memory interface, plus a cached top-level wrapper:
 
 - `riscvai.RiscVCore` is the original single-cycle reference implementation.
-- `riscvai.PipelinedRiscVCore` is the four-stage implementation.
-- `riscvai.CachedPipelinedRiscVCore` adds private instruction and data caches
+- `riscvai.RvaiFourStages` is the four-stage implementation. Pipeline
+  organizations live in separate, explicitly named Chisel modules so they can
+  evolve and be compared independently.
+- `riscvai.CachedRvaiFourStages` adds private instruction and data caches
   with one arbitrated memory interface.
 
 Memories are kept outside the cores so they can be connected to simulation
@@ -135,7 +137,7 @@ There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
 The default cached top infers synchronous memories, which FPGA tools can map to
-block RAM. `Sky130CachedPipelinedRiscVCore` instead instantiates two
+block RAM. `Sky130CachedRvaiFourStages` instead instantiates two
 `sky130_sram_1kbyte_1rw1r_32x256_8` OpenRAM macros, one for each cache. Port 1 is
 the lookup port; port 0 performs byte-masked store updates and full-word
 refills. The instruction macro's falling-edge output directly supplies the

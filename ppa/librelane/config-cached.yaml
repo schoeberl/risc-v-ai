@@ -1,4 +1,4 @@
-DESIGN_NAME: CachedPipelinedRiscVCore
+DESIGN_NAME: CachedRvaiFourStages
 VERILOG_FILES:
   - dir::../../generated/CacheArbiter.sv
   - dir::../../generated/InstructionCache.sv
@@ -7,8 +7,8 @@ VERILOG_FILES:
   - dir::../../generated/IterativeDivider.sv
   - dir::../../generated/MachineCsrs.sv
   - dir::../../generated/PipelinedMultiplier.sv
-  - dir::../../generated/PipelinedRiscVCore.sv
-  - dir::../../generated/CachedPipelinedRiscVCore.sv
+  - dir::../../generated/RvaiFourStages.sv
+  - dir::../../generated/CachedRvaiFourStages.sv
   - dir::../../generated/memory_256x32.sv
   - dir::../../generated/tags_64x22.sv
 

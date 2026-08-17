@@ -5,7 +5,7 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.must.Matchers
 
-class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
+class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
 
@@ -60,7 +60,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
       retirementsDuringWatchedRead: Int
   )
 
-  private def initialize(dut: CachedPipelinedRiscVCore): Unit = {
+  private def initialize(dut: CachedRvaiFourStages): Unit = {
     dut.io.memoryReady.poke(false.B)
     dut.io.memoryReadData.poke(0.U)
     dut.io.debugRegisterAddress.poke(0.U)
@@ -70,7 +70,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
   }
 
   private def expectRegister(
-      dut: CachedPipelinedRiscVCore,
+      dut: CachedRvaiFourStages,
       register: Int,
       value: BigInt
   ): Unit = {
@@ -79,7 +79,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
   }
 
   private def runWithMemory(
-      dut: CachedPipelinedRiscVCore,
+      dut: CachedRvaiFourStages,
       memory: collection.mutable.Map[BigInt, BigInt],
       cycles: Int,
       latency: Int = 2,
@@ -152,9 +152,9 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
     RunResult(readTransfers, writeTransfers, stallCycles, retirementsDuringWatchedRead)
   }
 
-  "CachedPipelinedRiscVCore" - {
+  "CachedRvaiFourStages" - {
     "refills both caches and arbitrates a store miss followed by a dependent load" in {
-      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi x1, x0, 64
@@ -178,7 +178,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
     }
 
     "refills before an atomic read-modify-write and preserves the old value" in {
-      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi    x1, x0, 64
@@ -200,7 +200,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
     }
 
     "applies byte write masks through synchronous cache data storage" in {
-      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi x1, x0, 64
@@ -222,7 +222,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
     }
 
     "invalidates and refills the instruction cache after FENCE.I" in {
-      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> BigInt("0000100f", 16),        // fence.i
@@ -240,7 +240,7 @@ class CachedPipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with Chisel
     }
 
     "handles an instruction miss locally while older instructions retire" in {
-      simulate(new CachedPipelinedRiscVCore(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(1, 0, 0, 1),             // addi x1, x0, 1

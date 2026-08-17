@@ -5,7 +5,7 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.must.Matchers
 
-class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
+class RvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private val Nop = BigInt("00000013", 16)
 
   private def bits(value: Int, width: Int): BigInt =
@@ -44,7 +44,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
       (((encoded >> 1) & 0xf) << 8) | (((encoded >> 11) & 1) << 7) | BigInt(0x63)
   }
 
-  private def initialize(dut: PipelinedRiscVCore): Unit = {
+  private def initialize(dut: RvaiFourStages): Unit = {
     dut.io.instruction.poke(Nop.U)
     dut.io.instructionValid.poke(true.B)
     dut.io.dataReadData.poke(0.U)
@@ -56,7 +56,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     dut.reset.poke(false.B)
   }
 
-  private def expectRegister(dut: PipelinedRiscVCore, register: Int, value: BigInt): Unit = {
+  private def expectRegister(dut: RvaiFourStages, register: Int, value: BigInt): Unit = {
     dut.io.debugRegisterAddress.poke(register.U)
     dut.io.debugRegisterData.expect((value & BigInt("ffffffff", 16)).U)
   }
@@ -72,7 +72,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     } & BigInt("ffffffff", 16)
 
   private def runCycle(
-      dut: PipelinedRiscVCore,
+      dut: RvaiFourStages,
       program: Map[BigInt, BigInt],
       memory: collection.mutable.Map[BigInt, BigInt]
   ): Boolean = {
@@ -96,9 +96,9 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     stalled
   }
 
-  "PipelinedRiscVCore" - {
+  "RvaiFourStages" - {
     "forwards dependent arithmetic results" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(5, 0, 0, 1),       // addi x1, x0, 5
@@ -120,7 +120,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "stalls once for a load-use dependency" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(42, 0, 0, 1),      // addi x1, x0, 42
@@ -140,7 +140,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "flushes the sequential instruction after a taken branch" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(1, 0, 0, 1),       // addi x1, x0, 1
@@ -159,7 +159,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "loads and stores signed and unsigned bytes and halfwords" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(-128, 0, 0, 1),           // addi x1, x0, -128
@@ -186,7 +186,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "executes the complete RV32M extension including division edge cases" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(-7, 0, 0, 1),             // addi x1, x0, -7
@@ -232,7 +232,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "stalls for iterative division and forwards the completed result" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(100, 0, 0, 1),           // addi x1, x0, 100
@@ -258,7 +258,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "registers six-stage multiplication results and forwards them" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(-7, 0, 0, 1),             // addi x1, x0, -7
@@ -284,7 +284,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "executes single-hart RV32A atomics and tracks reservations" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(0, 0, 0, 1),              // addi x1, x0, 0
@@ -333,7 +333,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "executes fences and all CSR instruction forms" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(0x88, 0, 0, 1),          // addi   x1, x0, 0x88
@@ -375,7 +375,7 @@ class PipelinedRiscVCoreSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     "takes a precise illegal-instruction trap and returns with MRET" in {
-      simulate(new PipelinedRiscVCore) { dut =>
+      simulate(new RvaiFourStages) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
           BigInt(0x00) -> iType(0x40, 0, 0, 1),          // addi  x1, x0, 0x40

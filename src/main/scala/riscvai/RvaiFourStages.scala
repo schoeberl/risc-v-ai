@@ -40,7 +40,7 @@ private class ExecuteMemoryWriteback extends Bundle {
   * Execute and writeback results are forwarded to decode. A load or atomic
   * followed immediately by a dependent instruction incurs one stall cycle.
   */
-class PipelinedRiscVCore(resetVector: BigInt = 0) extends Module {
+class RvaiFourStages(resetVector: BigInt = 0) extends Module {
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
     val instructionNextAddress = Output(UInt(32.W))
