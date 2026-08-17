@@ -27,15 +27,19 @@ sbt test
 
 ## Processor
 
-The project contains two 32-bit cores with the same separate instruction and
-data-memory interface, plus a cached top-level wrapper:
+The project contains three 32-bit cores with the same separate instruction and
+data-memory interface, plus cached top-level wrappers:
 
 - `riscvai.RiscVCore` is the original single-cycle reference implementation.
 - `riscvai.RvaiFourStages` is the four-stage implementation. Pipeline
   organizations live in separate, explicitly named Chisel modules so they can
   evolve and be compared independently.
+- `riscvai.RvaiThreeStages` keeps the register after instruction fetch and
+  combines decode/register-read with execute, followed by memory/writeback.
 - `riscvai.CachedRvaiFourStages` adds private instruction and data caches
   with one arbitrated memory interface.
+- `riscvai.CachedRvaiThreeStages` applies the same cache hierarchy to the
+  three-stage core for direct comparison.
 
 Memories are kept outside the cores so they can be connected to simulation
 models, FPGA block RAM, or a system bus.
@@ -59,6 +63,14 @@ prevent bubbles from changing architectural state.
 Retirement outputs report the PC and instruction reaching the final stage. A
 stall output and read-only register debug port support simulation and future
 compliance testing.
+
+### Three-stage pipeline
+
+`RvaiThreeStages` keeps the fetch register, then decodes the registered
+instruction, reads or forwards its operands, and executes it in one combined
+stage. The unchanged memory/writeback stage follows. It shares the ISA, hazard,
+trap, and external-memory behavior of the four-stage core while providing a
+smaller pipeline organization for PPA comparison.
 
 The first milestone implements:
 
@@ -136,13 +148,17 @@ speculative instruction fetch and locks the grant across memory wait states.
 There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
-The default cached top infers synchronous memories, which FPGA tools can map to
-block RAM. `Sky130CachedRvaiFourStages` instead instantiates two
+The default cached tops infer synchronous memories, which FPGA tools can map to
+block RAM. `Sky130CachedRvaiFourStages` and `Sky130CachedRvaiThreeStages` instead
+instantiate two
 `sky130_sram_1kbyte_1rw1r_32x256_8` OpenRAM macros, one for each cache. Port 1 is
 the lookup port; port 0 performs byte-masked store updates and full-word
-refills. The instruction macro's falling-edge output directly supplies the
-instruction for capture at the next rising edge. The data macro's output is
-captured in the cache before it reaches the core.
+refills. Architecturally, each macro is treated as a synchronous black box: its
+address is driven from the next address before the rising-edge pipeline boundary,
+and its late-cycle output is captured at that boundary. The OpenRAM Liberty model
+describes some internal timing arcs using a falling edge; that is a physical
+macro timing constraint, not an extra processor pipeline stage. The data macro's
+output is captured in the cache before it reaches the core.
 
 ## RTL and Sky130 PPA
 
@@ -150,6 +166,12 @@ Generate synthesis-ready SystemVerilog for the pipelined core with:
 
 ```sh
 make rtl
+```
+
+Generate the three-stage core with:
+
+```sh
+make rtl-three-stages
 ```
 
 Generate the cached top level with:
@@ -164,22 +186,25 @@ Generate the cached Sky130 macro top level with:
 make rtl-sky130-cached
 ```
 
-The generated files are written to `generated/`. Run the Sky130A LibreLane flow
-at a 10 ns (100 MHz) clock target with a descriptive run tag, then print the
-post-CTS metrics with:
+Generate the three-stage cached Sky130 macro top level with:
 
 ```sh
-make ppa-sky130 PPA_RUN_TAG=decode-split-split-sign-mul-100mhz
-python3 ppa/librelane/report_metrics.py decode-split-split-sign-mul-100mhz
+make rtl-sky130-cached-three-stages
 ```
 
-Run the equivalent 100 MHz flow with the two cache SRAMs using:
+The generated files are written to `generated/`. Run the 100 MHz Sky130A
+LibreLane flows including both cache SRAMs with:
 
 ```sh
 make ppa-sky130-sram-cached \
-  PPA_RUN_TAG=sram-caches-registered-response-100mhz
+  PPA_RUN_TAG=four-stages-no-repair-comparison-100mhz
 python3 ppa/librelane/report_metrics.py \
-  sram-caches-registered-response-100mhz
+  four-stages-no-repair-comparison-100mhz
+
+make ppa-sky130-sram-cached-three-stages \
+  PPA_RUN_TAG=three-stages-registered-cache-decisions-no-repair-100mhz
+python3 ppa/librelane/report_metrics.py \
+  three-stages-registered-cache-decisions-no-repair-100mhz
 ```
 
 By default, the Make target uses LibreLane from `~/librelane` and the PDK from
@@ -187,16 +212,54 @@ By default, the Make target uses LibreLane from `~/librelane` and the PDK from
 elsewhere. LibreLane run data is written below `ppa/librelane/runs/` and is not
 tracked by Git.
 
-The current target is the processor core without instruction/data memories or
-peripherals. LibreLane's fallback SDC models 2 ns input and output delays; a SoC
-wrapper should replace those assumptions when memories and peripherals are
-integrated.
+### Cache-inclusive pipeline comparison
 
-All results below use LibreLane Classic, Sky130A `sky130_fd_sc_hd`, the checked-in
-`ppa/librelane/config.yaml`, a 10 ns clock, and the nominal-corner post-CTS state
-from step 36. "Fmax" is the estimate `1000 / (10 - WNS)` in MHz, not the result of
-rerunning the flow at successively shorter clock periods. The run tag is also the
-directory name below `ppa/librelane/runs/`.
+This table tracks pipeline comparisons only when both 1 KiB OpenRAM-backed
+caches, their control, and the shared arbiter are included. Both entries use
+LibreLane Classic, Sky130A `sky130_fd_sc_hd`, identical 1600 µm by 1200 µm
+floorplans, a 10 ns clock target, and the nominal-corner post-CTS state. Both
+flows skip post-global-placement design repair because the OpenRAM Liberty model
+requires a 40 ps maximum transition on address pins while the best available
+standard-cell drive in this setup is 43 ps. CTS and post-CTS STA still run.
+
+| Metric | Four stages | Three stages | Three-stage change |
+|---|---:|---:|---:|
+| Setup WNS | -8.565 ns | -10.892 ns | -2.328 ns |
+| Instruction-SRAM half-cycle WNS | -8.565 ns | -10.635 ns | -2.070 ns |
+| Estimated Fmax | 36.86 MHz | 31.98 MHz | -13.2% |
+| Setup TNS | -13,743.700 ns | -12,509.700 ns | 9.0% less negative |
+| Die size | 1600 x 1200 µm | 1600 x 1200 µm | unchanged |
+| Standard-cell area | 395,338 µm² | 387,875 µm² | -1.89% |
+| Two SRAM macro area | 381,425 µm² | 381,425 µm² | unchanged |
+| Combined area | 776,763 µm² | 769,300 µm² | -0.96% |
+| Standard-cell instances | 49,693 | 49,235 | -0.92% |
+| Total placed instances | 51,161 | 50,703 | -0.90% |
+| Sequential cells | 5,509 | 5,380 | -2.34% |
+| Power | 45.111 mW | 44.234 mW | -1.94% |
+
+The four-stage worst path is from an instruction-tag register to an internal
+falling-edge timing check on the instruction SRAM. This is not an architectural
+stage, but it gives the address logic only half a clock period in the supplied
+macro model. Holding delay and uncertainty constant, its minimum-period estimate
+is `2 * (5 - WNS)`, or 36.86 MHz; the report script's ordinary full-cycle result
+of 53.87 MHz is not applicable to this path. The three-stage design's most
+negative slack is on a normal rising-edge-to-rising-edge path through the
+combined decode/execute logic to the iterative divider. However, its slightly
+less negative -10.635 ns instruction-SRAM path improves by only half a nanosecond
+for each nanosecond added to the clock period. It therefore sets the lower
+estimated Fmax of 31.98 MHz. Power is the post-CTS estimate at the requested
+100 MHz activity point, even though neither design closes timing at 100 MHz.
+
+The three-stage data-cache controller registers the synchronous tag decision and
+uses a lookup wait state. Consequently a data-cache read hit takes an extra cycle
+in this version. The four-stage pipeline can start the tag lookup one stage
+earlier and retains its pipelined hit path.
+
+### Historical PPA experiments
+
+The experiment log below records earlier core and cache timing work. Run tags are
+directory names below `ppa/librelane/runs/`; Fmax values are post-CTS estimates
+unless an entry explicitly identifies a half-cycle path.
 
 - `100mhz` — original combinational RV32M baseline: WNS -196.162 ns, estimated
   Fmax 4.85 MHz.

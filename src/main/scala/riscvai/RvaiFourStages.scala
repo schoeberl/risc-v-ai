@@ -34,13 +34,12 @@ private class ExecuteMemoryWriteback extends Bundle {
   val illegal = Bool()
 }
 
-/** A four-stage, single-issue RV32IMA_Zicsr_Zifencei processor.
+/** A configurable, single-issue RV32IMA_Zicsr_Zifencei pipeline.
   *
-  * The stages are fetch, decode/register-read, execute, and memory/writeback.
-  * Execute and writeback results are forwarded to decode. A load or atomic
-  * followed immediately by a dependent instruction incurs one stall cycle.
+  * Concrete classes select whether decode and execute are separate stages at
+  * elaboration time.
   */
-class RvaiFourStages(resetVector: BigInt = 0) extends Module {
+class RvaiPipeline(resetVector: BigInt, separateDecodeExecute: Boolean) extends Module {
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
     val instructionNextAddress = Output(UInt(32.W))
@@ -213,7 +212,17 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
     registers(io.debugRegisterAddress)
   )
 
-  val instruction = decodeExecute.instruction
+  val instruction = if (separateDecodeExecute) {
+    decodeExecute.instruction
+  } else {
+    fetchDecodeExecute.instruction
+  }
+  val executeValid = if (separateDecodeExecute) {
+    decodeExecute.valid
+  } else {
+    fetchDecodeExecute.valid
+  }
+  val executePc = if (separateDecodeExecute) decodeExecute.pc else fetchDecodeExecute.pc
   val opcode = instruction(6, 0)
   val rd = instruction(11, 7)
   val funct3 = instruction(14, 12)
@@ -222,11 +231,30 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
   val funct7 = instruction(31, 25)
   val isMret = instruction === "h30200073".U
 
-  val rs1Value = decodeExecute.rs1Value
-  val rs2Value = decodeExecute.rs2Value
-  val divideInstruction = decodeExecute.valid && opcode === OpcodeOp &&
+  private def readExecuteRegister(address: UInt): UInt =
+    Mux(
+      address === 0.U,
+      0.U,
+      Mux(
+        writebackActive && executeMemoryWriteback.rd === address,
+        writebackData,
+        registers(address)
+      )
+    )
+
+  val rs1Value = if (separateDecodeExecute) {
+    decodeExecute.rs1Value
+  } else {
+    readExecuteRegister(rs1)
+  }
+  val rs2Value = if (separateDecodeExecute) {
+    decodeExecute.rs2Value
+  } else {
+    readExecuteRegister(rs2)
+  }
+  val divideInstruction = executeValid && opcode === OpcodeOp &&
     funct7 === "b0000001".U && funct3(2)
-  val multiplyInstruction = decodeExecute.valid && opcode === OpcodeOp &&
+  val multiplyInstruction = executeValid && opcode === OpcodeOp &&
     funct7 === "b0000001".U && !funct3(2)
   val dividerStart = divideInstruction && !divider.io.busy && !divider.io.done &&
     !illegalTrap
@@ -308,22 +336,22 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
     is(OpcodeAuipc) {
       illegal := false.B
       registerWrite := true.B
-      result := decodeExecute.pc + immediateU
+      result := executePc + immediateU
     }
 
     is(OpcodeJal) {
       illegal := false.B
       registerWrite := true.B
-      result := decodeExecute.pc + 4.U
+      result := executePc + 4.U
       redirect := true.B
-      redirectTarget := decodeExecute.pc + immediateJ
+      redirectTarget := executePc + immediateJ
     }
 
     is(OpcodeJalr) {
       when(funct3 === "b000".U) {
         illegal := false.B
         registerWrite := true.B
-        result := decodeExecute.pc + 4.U
+        result := executePc + 4.U
         redirect := true.B
         redirectTarget := (rs1Value + immediateI) & "hfffffffe".U
       }
@@ -345,7 +373,7 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
       }
       when(branchTaken && validBranch) {
         redirect := true.B
-        redirectTarget := decodeExecute.pc + immediateB
+        redirectTarget := executePc + immediateB
       }
     }
 
@@ -505,6 +533,8 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
   io.dataNextAddress := address & "hfffffffc".U
 
   val decodeInstruction = fetchDecodeExecute.instruction
+  val decodeValid = fetchDecodeExecute.valid
+  val decodePc = fetchDecodeExecute.pc
   val decodeOpcode = decodeInstruction(6, 0)
   val decodeRs1 = decodeInstruction(19, 15)
   val decodeRs2 = decodeInstruction(24, 20)
@@ -516,8 +546,11 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
   val decodeUsesRs2 = decodeOpcode === OpcodeBranch || decodeOpcode === OpcodeStore ||
     decodeOpcode === OpcodeOp || decodeOpcode === OpcodeAtomic
 
-  val executeForwardActive = decodeExecute.valid && registerWrite && !illegal &&
-    !memoryRead && !atomicValid && rd =/= 0.U
+  val executeForwardActive = if (separateDecodeExecute) {
+    executeValid && registerWrite && !illegal && !memoryRead && !atomicValid && rd =/= 0.U
+  } else {
+    false.B
+  }
   private def readDecodeRegister(address: UInt): UInt =
     Mux(
       address === 0.U,
@@ -548,17 +581,28 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
   // Start the synchronous tag lookup in decode. Its result is compared and
   // registered during execute, before it can affect memory/writeback control.
   io.dataTagNextAddress := decodeMemoryAddress & "hfffffffc".U
-  val unavailableResultHazard = fetchDecodeExecute.valid && decodeExecute.valid &&
-    registerWrite && !illegal && (memoryRead || atomicValid) && rd =/= 0.U &&
+  val executeResultHazard = decodeValid && executeValid && registerWrite && !illegal &&
+    (memoryRead || atomicValid) && rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))
+  val writebackResultHazard = decodeValid && executeMemoryWriteback.valid &&
+    executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
+    (executeMemoryWriteback.memoryRead || executeMemoryWriteback.atomicValid) &&
+    executeMemoryWriteback.rd =/= 0.U &&
+    ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
+      (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
+  val unavailableResultHazard = if (separateDecodeExecute) {
+    executeResultHazard
+  } else {
+    writebackResultHazard
+  }
   val executionStall = divideStall || multiplyStall
   val pipelineStall = io.memoryStall || executionStall || unavailableResultHazard
   io.pipelineStall := pipelineStall
 
-  val executeRedirect = redirect && decodeExecute.valid && !illegal
-  val legalCsrWrite = decodeExecute.valid && opcode === OpcodeSystem &&
+  val executeRedirect = redirect && executeValid && !illegal
+  val legalCsrWrite = executeValid && opcode === OpcodeSystem &&
     validCsrCommand && csrs.io.readValid && csrs.io.writeAllowed && csrWriteRequested
-  val mretActive = decodeExecute.valid && isMret && !executionStall &&
+  val mretActive = executeValid && isMret && !executionStall &&
     !io.memoryStall && !illegalTrap
   csrs.io.writeEnable := legalCsrWrite && !executionStall && !io.memoryStall && !illegalTrap
   csrs.io.mret := mretActive
@@ -591,9 +635,9 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
     // Let the older instruction retire while execute, decode, and fetch hold.
     executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
   }.otherwise {
-    executeMemoryWriteback.valid := decodeExecute.valid
-    executeMemoryWriteback.pc := decodeExecute.pc
-    executeMemoryWriteback.instruction := decodeExecute.instruction
+    executeMemoryWriteback.valid := executeValid
+    executeMemoryWriteback.pc := executePc
+    executeMemoryWriteback.instruction := instruction
     executeMemoryWriteback.rd := rd
     executeMemoryWriteback.result := result
     executeMemoryWriteback.address := address
@@ -607,18 +651,26 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.illegal := illegal
 
     when(executeRedirect) {
-      decodeExecute.valid := false.B
+      if (separateDecodeExecute) {
+        decodeExecute.valid := false.B
+      }
       fetchDecodeExecute.valid := false.B
       fetchPc := redirectTarget
     }.elsewhen(unavailableResultHazard) {
-      // The older load/atomic advances; hold decode/fetch and inject a bubble.
-      decodeExecute.valid := false.B
+      // The older load/atomic advances; hold its consumer and inject a bubble.
+      if (separateDecodeExecute) {
+        decodeExecute.valid := false.B
+      } else {
+        executeMemoryWriteback.valid := false.B
+      }
     }.otherwise {
-      decodeExecute.valid := fetchDecodeExecute.valid
-      decodeExecute.pc := fetchDecodeExecute.pc
-      decodeExecute.instruction := fetchDecodeExecute.instruction
-      decodeExecute.rs1Value := decodeRs1Value
-      decodeExecute.rs2Value := decodeRs2Value
+      if (separateDecodeExecute) {
+        decodeExecute.valid := decodeValid
+        decodeExecute.pc := decodePc
+        decodeExecute.instruction := decodeInstruction
+        decodeExecute.rs1Value := decodeRs1Value
+        decodeExecute.rs2Value := decodeRs2Value
+      }
       fetchDecodeExecute.valid := io.instructionValid
       when(io.instructionValid) {
         fetchDecodeExecute.pc := fetchPc
@@ -648,3 +700,12 @@ class RvaiFourStages(resetVector: BigInt = 0) extends Module {
     executeMemoryWriteback.valid := false.B
   }
 }
+
+/** A four-stage processor with fetch, decode/register-read, execute, and
+  * memory/writeback stages.
+  *
+  * Execute and writeback results are forwarded to decode. A load or atomic
+  * followed immediately by a dependent instruction incurs one stall cycle.
+  */
+class RvaiFourStages(resetVector: BigInt = 0)
+    extends RvaiPipeline(resetVector, separateDecodeExecute = true)

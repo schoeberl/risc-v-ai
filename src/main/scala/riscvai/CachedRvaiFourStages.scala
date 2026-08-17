@@ -2,12 +2,15 @@ package riscvai
 
 import chisel3._
 
-/** Pipelined core with private 1 KiB instruction/data caches and one shared bus. */
-class CachedRvaiFourStages(
+/** Configurable pipelined core with private 1 KiB instruction/data caches and
+  * one shared bus.
+  */
+class CachedRvaiPipeline(
     resetVector: BigInt = 0,
     cacheBytes: Int = 1024,
     lineBytes: Int = 16,
-    useSky130Sram: Boolean = false
+    useSky130Sram: Boolean = false,
+    threeStages: Boolean = false
 ) extends Module {
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
@@ -27,10 +30,19 @@ class CachedRvaiFourStages(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = Module(new RvaiFourStages(resetVector))
+  private val core = if (threeStages) {
+    Module(new RvaiThreeStages(resetVector))
+  } else {
+    Module(new RvaiFourStages(resetVector))
+  }
   private val instructionCache =
     Module(new InstructionCache(cacheBytes, lineBytes, useSky130Sram))
-  private val dataCache = Module(new DataCache(cacheBytes, lineBytes, useSky130Sram))
+  private val dataCache = Module(new DataCache(
+    cacheBytes,
+    lineBytes,
+    useSky130Sram,
+    registeredTagHit = !threeStages
+  ))
   private val arbiter = Module(new CacheArbiter)
 
   instructionCache.io.cpuRequest := true.B
@@ -76,9 +88,46 @@ class CachedRvaiFourStages(
   io.debugRegisterData := core.io.debugRegisterData
 }
 
+/** Four-stage core with private instruction/data caches and one shared bus. */
+class CachedRvaiFourStages(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useSky130Sram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useSky130Sram,
+      threeStages = false
+    )
+
+/** Three-stage core with private instruction/data caches and one shared bus. */
+class CachedRvaiThreeStages(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useSky130Sram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useSky130Sram,
+      threeStages = true
+    )
+
 /** Sky130 implementation with one installed 1 KiB OpenRAM macro per cache. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useSky130Sram = true
+    )
+
+/** Three-stage Sky130 implementation with one installed OpenRAM macro per cache. */
+class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
+    extends CachedRvaiThreeStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

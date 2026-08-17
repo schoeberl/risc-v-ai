@@ -5,7 +5,11 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.must.Matchers
 
-class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim {
+abstract class CachedRvaiPipelineSpec(
+    coreName: String,
+    generate: => CachedRvaiPipeline,
+    minimumRetirementsDuringMiss: Int
+) extends AnyFreeSpec with Matchers with ChiselSim {
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
 
@@ -60,7 +64,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
       retirementsDuringWatchedRead: Int
   )
 
-  private def initialize(dut: CachedRvaiFourStages): Unit = {
+  private def initialize(dut: CachedRvaiPipeline): Unit = {
     dut.io.memoryReady.poke(false.B)
     dut.io.memoryReadData.poke(0.U)
     dut.io.debugRegisterAddress.poke(0.U)
@@ -70,7 +74,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
   }
 
   private def expectRegister(
-      dut: CachedRvaiFourStages,
+      dut: CachedRvaiPipeline,
       register: Int,
       value: BigInt
   ): Unit = {
@@ -79,7 +83,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
   }
 
   private def runWithMemory(
-      dut: CachedRvaiFourStages,
+      dut: CachedRvaiPipeline,
       memory: collection.mutable.Map[BigInt, BigInt],
       cycles: Int,
       latency: Int = 2,
@@ -152,9 +156,9 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
     RunResult(readTransfers, writeTransfers, stallCycles, retirementsDuringWatchedRead)
   }
 
-  "CachedRvaiFourStages" - {
+  coreName - {
     "refills both caches and arbitrates a store miss followed by a dependent load" in {
-      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(generate) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi x1, x0, 64
@@ -178,7 +182,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
     }
 
     "refills before an atomic read-modify-write and preserves the old value" in {
-      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(generate) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi    x1, x0, 64
@@ -200,7 +204,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
     }
 
     "applies byte write masks through synchronous cache data storage" in {
-      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(generate) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(64, 0, 0, 1),           // addi x1, x0, 64
@@ -222,7 +226,7 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
     }
 
     "invalidates and refills the instruction cache after FENCE.I" in {
-      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
+      simulate(generate) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> BigInt("0000100f", 16),        // fence.i
@@ -239,8 +243,8 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
       }
     }
 
-    "handles an instruction miss locally while older instructions retire" in {
-      simulate(new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16)) { dut =>
+    "handles an instruction miss locally without globally stalling" in {
+      simulate(generate) { dut =>
         initialize(dut)
         val memory = collection.mutable.Map[BigInt, BigInt](
           BigInt(0x00) -> iType(1, 0, 0, 1),             // addi x1, x0, 1
@@ -265,9 +269,23 @@ class CachedRvaiFourStagesSpec extends AnyFreeSpec with Matchers with ChiselSim 
         expectRegister(dut, 2, 2)
         expectRegister(dut, 3, 3)
         expectRegister(dut, 5, 5)
-        result.retirementsDuringWatchedRead must be > 0
+        result.retirementsDuringWatchedRead must be >= minimumRetirementsDuringMiss
         result.stallCycles mustBe 0
       }
     }
   }
 }
+
+class CachedRvaiFourStagesSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiFourStages",
+      new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 1
+    )
+
+class CachedRvaiThreeStagesSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiThreeStages",
+      new CachedRvaiThreeStages(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 0
+    )

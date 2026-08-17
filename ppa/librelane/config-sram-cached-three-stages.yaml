@@ -1,4 +1,4 @@
-DESIGN_NAME: Sky130CachedRvaiFourStages
+DESIGN_NAME: Sky130CachedRvaiThreeStages
 VERILOG_FILES:
   - dir::../../generated/CacheArbiter.sv
   - dir::../../generated/DataCache.sv
@@ -6,9 +6,9 @@ VERILOG_FILES:
   - dir::../../generated/IterativeDivider.sv
   - dir::../../generated/MachineCsrs.sv
   - dir::../../generated/PipelinedMultiplier.sv
-  - dir::../../generated/RvaiFourStages.sv
+  - dir::../../generated/RvaiThreeStages.sv
   - dir::../../generated/Sky130CacheDataMemory.sv
-  - dir::../../generated/Sky130CachedRvaiFourStages.sv
+  - dir::../../generated/Sky130CachedRvaiThreeStages.sv
   - dir::../../generated/tags_64x22.sv
 
 CLOCK_PORT: clock
