@@ -423,6 +423,8 @@ abstract class RvaiPipelineSpec(
 
 class RvaiFourStagesSpec extends RvaiPipelineSpec("RvaiFourStages", new RvaiFourStages)
 
+class RvaiFiveStagesSpec extends RvaiPipelineSpec("RvaiFiveStages", new RvaiFiveStages)
+
 class RvaiThreeStagesSpec extends RvaiPipelineSpec("RvaiThreeStages", new RvaiThreeStages)
 
 class RvaiThreeStagesPredecodeSpec

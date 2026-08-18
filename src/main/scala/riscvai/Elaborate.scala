@@ -15,6 +15,19 @@ object Elaborate extends App {
   )
 }
 
+/** Emits the textbook five-stage processor. */
+object ElaborateFiveStages extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new RvaiFiveStages,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
 /** Emits synthesis-ready SystemVerilog for the three-stage processor. */
 object ElaborateThreeStages extends App {
   ChiselStage.emitSystemVerilogFile(
@@ -97,6 +110,19 @@ object ElaborateCached extends App {
 object ElaborateSky130Cached extends App {
   ChiselStage.emitSystemVerilogFile(
     new Sky130CachedRvaiFourStages,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
+/** Emits the textbook five-stage cached processor using Sky130 SRAM macros. */
+object ElaborateSky130CachedFiveStages extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new Sky130CachedRvaiFiveStages,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",

@@ -14,13 +14,16 @@ class CachedRvaiPipeline(
     predecodeInFetch: Boolean = false,
     executeMemoryInThirdStage: Boolean = false,
     twoStages: Boolean = false,
-    multicycle: Boolean = false
+    multicycle: Boolean = false,
+    fiveStages: Boolean = false
 ) extends Module {
   require(!predecodeInFetch || threeStages)
   require(!executeMemoryInThirdStage || threeStages)
   require(!twoStages || (!threeStages && !predecodeInFetch && !executeMemoryInThirdStage))
   require(!multicycle || (!twoStages && !threeStages && !predecodeInFetch &&
-    !executeMemoryInThirdStage))
+    !executeMemoryInThirdStage && !fiveStages))
+  require(!fiveStages || (!twoStages && !threeStages && !predecodeInFetch &&
+    !executeMemoryInThirdStage && !multicycle))
 
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
@@ -41,7 +44,9 @@ class CachedRvaiPipeline(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = if (multicycle) {
+  private val core = if (fiveStages) {
+    Module(new RvaiFiveStages(resetVector))
+  } else if (multicycle) {
     Module(new RvaiMulticycle(resetVector))
   } else if (twoStages) {
     Module(new RvaiTwoStages(resetVector))
@@ -196,6 +201,20 @@ class CachedRvaiMulticycle(
       multicycle = true
     )
 
+/** Textbook five-stage core with private caches and one shared bus. */
+class CachedRvaiFiveStages(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useAsicSram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useAsicSram,
+      fiveStages = true
+    )
+
 /** Sky130 implementation with CF SRAM data and tag macros for both caches. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
@@ -244,6 +263,15 @@ class Sky130CachedRvaiTwoStages(resetVector: BigInt = 0)
 /** Serialized multicycle implementation using CF SRAM data and tag macros. */
 class Sky130CachedRvaiMulticycle(resetVector: BigInt = 0)
     extends CachedRvaiMulticycle(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useAsicSram = true
+    )
+
+/** Textbook five-stage implementation using CF SRAM data and tag macros. */
+class Sky130CachedRvaiFiveStages(resetVector: BigInt = 0)
+    extends CachedRvaiFiveStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

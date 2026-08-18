@@ -132,13 +132,17 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
         if (retirementTrace.size > 24) retirementTrace.dequeue()
       }
       if (dut.io.illegalInstruction.peek().litToBoolean) {
+        val registerDump = (1 until 32).map { index =>
+          dut.io.debugRegisterAddress.poke(index.U)
+          f"x$index%d=0x${dut.io.debugRegisterData.peek().litValue}%08x"
+        }.mkString("registers [", ", ", "]")
         fail(
           f"illegal instruction at simulation cycle $cycle%d, " +
             f"PC 0x${dut.io.retiredPc.peek().litValue}%08x, " +
             f"instruction 0x${dut.io.retiredInstruction.peek().litValue}%08x, " +
             retirementTrace.map { case (pc, instruction) =>
               f"$pc%08x:$instruction%08x"
-            }.mkString("recent [", ", ", "]")
+            }.mkString("recent [", ", ", "]") + ", " + registerDump
         )
       }
       dut.clock.step()
@@ -185,7 +189,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
         52.63,
         () => new CachedRvaiThreeStagesExecuteMemory()
       ),
-      Configuration("Four stages", 59.08, () => new CachedRvaiFourStages())
+      Configuration("Four stages", 59.08, () => new CachedRvaiFourStages()),
+      Configuration("Five stages", 63.70, () => new CachedRvaiFiveStages())
     )
     val configurations = sys.env.get("COREMARK_PIPELINE") match {
       case Some(selected) => allConfigurations.filter(_.name == selected)

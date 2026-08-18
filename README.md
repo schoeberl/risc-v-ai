@@ -28,13 +28,15 @@ sbt test
 
 ## Processor
 
-The project contains seven 32-bit cores with the same separate instruction and
+The project contains eight 32-bit cores with the same separate instruction and
 data-memory interface, plus cached top-level wrappers:
 
 - `riscvai.RiscVCore` is the original single-cycle reference implementation.
 - `riscvai.RvaiFourStages` is the four-stage implementation. Pipeline
   organizations live in separate, explicitly named Chisel modules so they can
   evolve and be compared independently.
+- `riscvai.RvaiFiveStages` is the textbook IF/ID/EX/MEM/WB implementation,
+  with forwarding into execute and a distinct writeback stage.
 - `riscvai.RvaiTwoStages` uses the synchronous instruction-cache output for
   decode/register-read/execute in stage one and performs synchronous data-cache
   access plus writeback in stage two.
@@ -60,9 +62,22 @@ data-memory interface, plus cached top-level wrappers:
   two-stage core.
 - `riscvai.CachedRvaiMulticycle` applies the same cache hierarchy to the
   serialized core.
+- `riscvai.CachedRvaiFiveStages` applies the same cache hierarchy to the
+  textbook five-stage core.
 
 Memories are kept outside the cores so they can be connected to simulation
 models, FPGA block RAM, or a system bus.
+
+### Five-stage pipeline
+
+`RvaiFiveStages` implements the conventional fetch, decode/register-read,
+execute, memory, and writeback organization. ALU results forward from MEM and
+WB into EX. Loads and atomics use the registered WB result, so an immediately
+dependent instruction incurs the textbook one-cycle load-use bubble. WB can
+commit independently while a younger MEM access stalls; a consumed bit prevents
+repeated retirement while retaining the WB payload for a held EX instruction's
+forwarding path. Branches and jumps resolve in EX and flush the two younger
+stages, matching the four-stage core's control-hazard penalty.
 
 ### Four-stage pipeline
 
@@ -212,7 +227,7 @@ There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
 The default cached tops infer synchronous memories, which FPGA tools can map to
-block RAM. The three `Sky130CachedRvai*` comparison tops instantiate four
+block RAM. The `Sky130CachedRvai*` comparison tops instantiate four
 single-port, rising-edge synchronous `CF_SRAM_1024x32` macros: independent data
 and tag memories for the instruction and data caches. Reads and writes do not
 overlap architecturally: a
@@ -243,6 +258,12 @@ Generate synthesis-ready SystemVerilog for the pipelined core with:
 
 ```sh
 make rtl
+```
+
+Generate the textbook five-stage core with:
+
+```sh
+make rtl-five-stages
 ```
 
 Generate the two-stage core with:
@@ -285,6 +306,12 @@ Generate the cached Sky130 macro top level with:
 
 ```sh
 make rtl-sky130-cached
+```
+
+Generate the five-stage cached Sky130 macro top level with:
+
+```sh
+make rtl-sky130-cached-five-stages
 ```
 
 Generate the two-stage cached Sky130 macro top level with:
@@ -356,6 +383,11 @@ make ppa-sky130-sram-cached-multicycle-post-cts \
   PPA_RUN_TAG=cf-tags-multicycle-100mhz
 python3 ppa/librelane/report_metrics.py \
   cf-tags-multicycle-100mhz
+
+make ppa-sky130-sram-cached-five-stages-post-cts \
+  PPA_RUN_TAG=cf-tags-five-textbook-final-100mhz
+python3 ppa/librelane/report_metrics.py \
+  cf-tags-five-textbook-final-100mhz
 ```
 
 The post-CTS targets stop at `OpenROAD.STAMidPNR-1`, exactly the checkpoint read
@@ -402,31 +434,34 @@ post-CTS state. The flows skip post-global-placement design repair and post-CTS
 resizer optimization so an unattainable 100 MHz target does not distort area
 with repair buffers.
 
-| Metric | Multicycle | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages |
-|---|---:|---:|---:|---:|---:|---:|
-| Setup WNS | -3.760 ns | -10.012 ns | -11.467 ns | -11.678 ns | -9.002 ns | -6.926 ns |
-| Estimated Fmax | 72.67 MHz | 49.97 MHz | 46.58 MHz | 46.13 MHz | 52.63 MHz | 59.08 MHz |
-| Setup TNS | -359.488 ns | -4,841.750 ns | -5,575.510 ns | -6,292.590 ns | -7,815.900 ns | -2,402.380 ns |
-| Die size | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm |
-| Standard-cell area | 264,869 µm² | 257,082 µm² | 259,275 µm² | 260,127 µm² | 260,786 µm² | 263,976 µm² |
-| Four SRAM macro area | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² |
-| Combined area | 740,824 µm² | 733,037 µm² | 735,230 µm² | 736,082 µm² | 736,741 µm² | 739,931 µm² |
-| Standard-cell instances | 39,292 | 38,742 | 38,967 | 39,011 | 38,962 | 39,144 |
-| Total placed instances | 41,114 | 40,564 | 40,789 | 40,833 | 40,784 | 40,966 |
-| Sequential cells | 2,714 | 2,485 | 2,550 | 2,554 | 2,537 | 2,679 |
-| Power | 50.633 mW | 48.800 mW | 49.201 mW | 49.174 mW | 49.204 mW | 50.272 mW |
-| CoreMark CPI | 4.523 | 1.523 | 1.695 | 1.695 | 1.774 | 1.835 |
+| Metric | Multicycle | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Estimated Fmax | 72.67 MHz | 49.97 MHz | 46.58 MHz | 46.13 MHz | 52.63 MHz | 59.08 MHz | 63.70 MHz |
+| Standard-cell area | 264,869 µm² | 257,082 µm² | 259,275 µm² | 260,127 µm² | 260,786 µm² | 263,976 µm² | 270,920 µm² |
+| Four SRAM macro area | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² | 475,955 µm² |
+| Combined area | 740,824 µm² | 733,037 µm² | 735,230 µm² | 736,082 µm² | 736,741 µm² | 739,931 µm² | 746,875 µm² |
+| Standard-cell instances | 39,292 | 38,742 | 38,967 | 39,011 | 38,962 | 39,144 | 39,575 |
+| Total placed instances | 41,114 | 40,564 | 40,789 | 40,833 | 40,784 | 40,966 | 41,397 |
+| Sequential cells | 2,714 | 2,485 | 2,550 | 2,554 | 2,537 | 2,679 | 2,779 |
+| Power | 50.633 mW | 48.800 mW | 49.201 mW | 49.174 mW | 49.204 mW | 50.272 mW | 51.562 mW |
+| CoreMark CPI | 4.523 | 1.523 | 1.695 | 1.695 | 1.774 | 1.835 | 1.835 |
+| Projected iterations/s | 51.28 | 104.73 | 87.71 | 86.86 | 94.69 | 102.75 | 110.79 |
 
-The CF SRAM model uses rising-edge address and data timing, so all six Fmax
+The CF SRAM model uses rising-edge address and data timing, so all seven Fmax
 values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. These runs use
 the unified execute-to-memory data-cache lookup, with synchronous CF SRAM tag
-reads in all six organizations. The multicycle organization is fastest: its
+reads in all seven organizations. The multicycle organization is fastest: its
 72.67 MHz estimate is 23.0% above the four-stage result. Its worst path is the
 asynchronous register-file read during the dedicated decode state, from a source
 register-index bit to the captured operand. Serialized control removes
 forwarding and cache-ready feedback from that path, but this implementation
 reuses the common pipeline payloads and execution units; consequently it is a
 frequency comparison point rather than an area-minimized PicoRV32 clone.
+The textbook five-stage core reaches 63.70 MHz, 7.8% above four stages. Its
+worst path begins in ID source-register/hazard decoding and crosses pipeline
+stall control; the live SRAM load result is deliberately excluded from EX
+forwarding. The extra MEM/WB payload and forwarding control increase combined
+area by 0.9% and power by 2.6% relative to four stages.
 Moving the tags into hard macros removes the register-memory decoder and tag
 selection from the critical hit path. The four-stage worst path is now wholly
 inside core decode/control. The plain three-stage worst path ends in the
@@ -435,7 +470,7 @@ SRAM input. The merged execute/memory path runs from execute control through the
 data-cache ready/stall response and retirement control into stage-two decode.
 The two-stage worst path begins at the data-cache tag SRAM, passes through hit
 detection and pipeline backpressure, then crosses stage-one decode/control and
-ends at the instruction-cache data SRAM address. None of the six worst setup
+ends at the instruction-cache data SRAM address. None of the seven worst setup
 paths ends in a tag memory. Resolving branches in stage three makes the merged
 variant 13.0% faster than the plain three-stage
 core, though it remains 10.9% slower than four stages at this checkpoint. The
@@ -464,7 +499,7 @@ This requires `riscv64-unknown-elf-gcc`, `objcopy`, and `size`. The checked-in
 bare-metal port builds one performance-seed iteration using GCC 13.2.0 with
 `-O2 -march=rv32im_zicsr -mabi=ilp32`, a static 2,000-byte CoreMark data block,
 and no libc. The ELF contains 10,608 bytes of text, 16 bytes of initialized data,
-and 2,028 bytes of BSS. The same binary runs on all six cached organizations.
+and 2,028 bytes of BSS. The same binary runs on all seven cached organizations.
 
 Every row below passed CoreMark's algorithm and data-type CRC checks. The shared
 external memory responds combinationally so the comparison focuses on the
@@ -483,11 +518,12 @@ cache-inclusive Sky130 Fmax from the unified-cache PPA table above.
 | Three stages + fetch predecode | 531,089 | 313,332 | 1.695 | 86.86 | 11,516 | 53,768 | 16,478 |
 | Three stages + execute/memory | 555,806 | 313,331 | 1.774 | 94.69 | 11,824 | 53,768 | 16,478 |
 | Four stages | 574,974 | 313,332 | 1.835 | 102.75 | 11,824 | 53,768 | 16,478 |
+| Five stages | 574,974 | 313,332 | 1.835 | 110.79 | 11,824 | 53,768 | 16,478 |
 
-The identical 53,768 data reads and 16,478 writes demonstrate that all six
-pipeline organizations use equivalent data-cache behavior. The four-stage and
-merged execute/memory cores perform 308 additional instruction reads because
-they resolve control flow in stage three rather than stage two. The extra
+The identical 53,768 data reads and 16,478 writes demonstrate that all seven
+pipeline organizations use equivalent data-cache behavior. The four-stage,
+five-stage, and merged execute/memory cores perform 308 additional instruction
+reads because they resolve control flow in stage three rather than stage two. The extra
 wrong-path fetches raise CPI to 1.774 versus 1.695 for the plain
 three-stage core, despite eliminating the load-use bubble. The higher 52.63 MHz
 Fmax more than offsets that CPI cost: projected throughput is 94.69
@@ -499,6 +535,10 @@ instruction reads, 584 fewer than the plain three-stage core. Its CPI of 1.523
 is 10.1% lower than the plain three-stage result. Combining that CPI with the
 49.97 MHz post-CTS estimate gives 104.73 projected iterations/s: 19.4% above the
 plain three-stage core and 1.9% above the four-stage core.
+The five-stage and four-stage cores have identical cycle counts, CPI, and
+external traffic because both resolve control flow in EX and insert one
+load-use bubble. The distinct WB boundary raises Fmax from 59.08 to 63.70 MHz,
+so projected throughput increases by 7.8% to 110.79 iterations/s.
 The multicycle core has the same external traffic as the two-stage core, but its
 one-instruction-at-a-time schedule raises CPI to 4.523. Its 72.67 MHz Fmax does
 not compensate for those extra cycles on CoreMark, yielding 51.28 projected

@@ -9,7 +9,8 @@ abstract class CachedRvaiPipelineSpec(
     coreName: String,
     generate: => CachedRvaiPipeline,
     minimumRetirementsDuringMiss: Int,
-    cycleScale: Int = 1
+    cycleScale: Int = 1,
+    testHeldExecuteForwarding: Boolean = false
 ) extends AnyFreeSpec with Matchers with ChiselSim {
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
@@ -265,6 +266,29 @@ abstract class CachedRvaiPipelineSpec(
       }
     }
 
+    if (testHeldExecuteForwarding) {
+      "preserves a WB-forwarded EX operand across a younger MEM miss" in {
+        simulate(generate) { dut =>
+          initialize(dut)
+          val memory = collection.mutable.Map[BigInt, BigInt](
+            BigInt(0x00) -> iType(0x80, 0, 0, 10),         // addi x10, x0, 0x80
+            BigInt(0x04) -> iType(0, 10, 2, 1, 0x03),     // lw   x1, 0(x10)
+            BigInt(0x08) -> iType(64, 10, 2, 2, 0x03),    // lw   x2, 64(x10)
+            BigInt(0x0c) -> iType(1, 1, 0, 3),            // addi x3, x1, 1
+            BigInt(0x10) -> jType(0, 0),                  // loop
+            BigInt(0x80) -> BigInt(41),
+            BigInt(0xc0) -> BigInt(7)
+          )
+
+          runWithMemory(dut, memory, cycles = 180, latency = 6)
+
+          expectRegister(dut, 1, 41)
+          expectRegister(dut, 2, 7)
+          expectRegister(dut, 3, 42)
+        }
+      }
+    }
+
     "handles an instruction miss locally without globally stalling" in {
       simulate(generate) { dut =>
         initialize(dut)
@@ -303,6 +327,14 @@ class CachedRvaiFourStagesSpec
       "CachedRvaiFourStages",
       new CachedRvaiFourStages(cacheBytes = 256, lineBytes = 16),
       minimumRetirementsDuringMiss = 1
+    )
+
+class CachedRvaiFiveStagesSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiFiveStages",
+      new CachedRvaiFiveStages(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 1,
+      testHeldExecuteForwarding = true
     )
 
 class CachedRvaiThreeStagesSpec

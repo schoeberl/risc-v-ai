@@ -41,6 +41,16 @@ private class ExecuteMemoryWriteback extends Bundle {
   val redirectTarget = UInt(32.W)
 }
 
+private class MemoryWriteback extends Bundle {
+  val valid = Bool()
+  val pc = UInt(32.W)
+  val instruction = UInt(32.W)
+  val rd = UInt(5.W)
+  val data = UInt(32.W)
+  val registerWrite = Bool()
+  val illegal = Bool()
+}
+
 /** A configurable, single-issue RV32IMA_Zicsr_Zifencei pipeline.
   *
   * Concrete classes select whether decode and execute are separate stages and
@@ -52,7 +62,9 @@ class RvaiPipeline(
     predecodeInFetch: Boolean = false,
     mergeExecuteMemory: Boolean = false,
     executeFromInstructionPort: Boolean = false,
-    serializedInstructions: Boolean = false
+    serializedInstructions: Boolean = false,
+    separateWritebackStage: Boolean = false,
+    forwardInExecute: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
@@ -76,6 +88,12 @@ class RvaiPipeline(
       !mergeExecuteMemory && !executeFromInstructionPort),
     "serialized execution uses explicit fetch, decode, execute, and memory phases"
   )
+  require(
+    !separateWritebackStage || (separateDecodeExecute && !predecodeInFetch &&
+      !mergeExecuteMemory && !executeFromInstructionPort && !serializedInstructions),
+    "a separate writeback stage extends the conventional four-stage organization"
+  )
+  require(!forwardInExecute || separateWritebackStage)
 
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
@@ -152,6 +170,8 @@ class RvaiPipeline(
   } else {
     Reg(new ExecuteMemoryWriteback)
   }
+  private val memoryWriteback = Reg(new MemoryWriteback)
+  private val memoryWritebackConsumed = RegInit(false.B)
   private val mergedExecutionComplete = WireDefault(true.B)
   private object SerializedState extends ChiselEnum {
     val fetch, decode, execute, memory = Value
@@ -184,12 +204,59 @@ class RvaiPipeline(
     Mux(scSuccess, 0.U, 1.U),
     Mux(executeMemoryWriteback.memoryRead, loadData, executeMemoryWriteback.result)
   )
-  val writebackActive = executeMemoryWriteback.valid &&
-    executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
-    executeMemoryWriteback.rd =/= 0.U && !io.memoryStall && mergedExecutionComplete
+  val writebackValid = if (separateWritebackStage) {
+    memoryWriteback.valid && !memoryWritebackConsumed
+  } else {
+    executeMemoryWriteback.valid && !io.memoryStall && mergedExecutionComplete
+  }
+  val writebackPc = if (separateWritebackStage) {
+    memoryWriteback.pc
+  } else {
+    executeMemoryWriteback.pc
+  }
+  val writebackInstruction = if (separateWritebackStage) {
+    memoryWriteback.instruction
+  } else {
+    executeMemoryWriteback.instruction
+  }
+  val writebackRd = if (separateWritebackStage) {
+    memoryWriteback.rd
+  } else {
+    executeMemoryWriteback.rd
+  }
+  val committedData = if (separateWritebackStage) {
+    memoryWriteback.data
+  } else {
+    writebackData
+  }
+  val writebackRegisterWrite = if (separateWritebackStage) {
+    memoryWriteback.registerWrite
+  } else {
+    executeMemoryWriteback.registerWrite
+  }
+  val writebackIllegal = if (separateWritebackStage) {
+    memoryWriteback.illegal
+  } else {
+    executeMemoryWriteback.illegal
+  }
+  val writebackCanCommit = if (separateWritebackStage) true.B else !io.memoryStall
+  val writebackForwardActive = (if (separateWritebackStage) {
+    memoryWriteback.valid
+  } else {
+    writebackValid
+  }) && writebackRegisterWrite && !writebackIllegal && writebackRd =/= 0.U
+  val writebackActive = writebackValid && writebackRegisterWrite && !writebackIllegal &&
+    writebackRd =/= 0.U && writebackCanCommit
+  val memoryForwardActive = if (separateWritebackStage) {
+    executeMemoryWriteback.valid && executeMemoryWriteback.registerWrite &&
+      !executeMemoryWriteback.illegal && executeMemoryWriteback.rd =/= 0.U &&
+      !executeMemoryWriteback.memoryRead && !executeMemoryWriteback.atomicValid
+  } else {
+    false.B
+  }
 
   when(writebackActive) {
-    registers(executeMemoryWriteback.rd) := writebackData
+    registers(writebackRd) := committedData
   }
   registers(0) := 0.U
 
@@ -254,13 +321,12 @@ class RvaiPipeline(
   )
   io.dataWriteEnable := dataWriteActive
   io.illegalInstruction := illegalTrap
-  io.retiredValid := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
-    !io.memoryStall && mergedExecutionComplete
-  io.retiredPc := executeMemoryWriteback.pc
-  io.retiredInstruction := executeMemoryWriteback.instruction
+  io.retiredValid := writebackValid && !writebackIllegal && writebackCanCommit
+  io.retiredPc := writebackPc
+  io.retiredInstruction := writebackInstruction
   io.instructionCacheInvalidate := io.retiredValid &&
-    executeMemoryWriteback.instruction(6, 0) === OpcodeMiscMem &&
-    executeMemoryWriteback.instruction(14, 12) === "b001".U
+    writebackInstruction(6, 0) === OpcodeMiscMem &&
+    writebackInstruction(14, 12) === "b001".U
   io.debugRegisterData := Mux(
     io.debugRegisterAddress === 0.U,
     0.U,
@@ -301,18 +367,37 @@ class RvaiPipeline(
       address === 0.U,
       0.U,
       Mux(
-        writebackActive && executeMemoryWriteback.rd === address,
-        writebackData,
+        writebackActive && writebackRd === address,
+        committedData,
         registers(address)
       )
     )
 
-  val rs1Value = if (separateDecodeExecute) {
+  private def forwardedExecuteRegister(address: UInt, unforwarded: UInt): UInt =
+    Mux(
+      address === 0.U,
+      0.U,
+      Mux(
+        memoryForwardActive && executeMemoryWriteback.rd === address,
+        executeMemoryWriteback.result,
+        Mux(
+          writebackForwardActive && writebackRd === address,
+          committedData,
+          unforwarded
+        )
+      )
+    )
+
+  val rs1Value = if (separateDecodeExecute && forwardInExecute) {
+    forwardedExecuteRegister(rs1, decodeExecute.rs1Value)
+  } else if (separateDecodeExecute) {
     decodeExecute.rs1Value
   } else {
     readExecuteRegister(rs1)
   }
-  val rs2Value = if (separateDecodeExecute) {
+  val rs2Value = if (separateDecodeExecute && forwardInExecute) {
+    forwardedExecuteRegister(rs2, decodeExecute.rs2Value)
+  } else if (separateDecodeExecute) {
     decodeExecute.rs2Value
   } else {
     readExecuteRegister(rs2)
@@ -359,8 +444,7 @@ class RvaiPipeline(
 
   csrs.io.address := instruction(31, 20)
   csrs.io.writeData := csrWriteData
-  csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
-    !io.memoryStall && mergedExecutionComplete
+  csrs.io.retired := io.retiredValid
   csrs.io.trapEnter := illegalTrap
   csrs.io.trapPc := executeMemoryWriteback.pc
   csrs.io.trapCause := 2.U // Illegal instruction
@@ -639,7 +723,9 @@ class RvaiPipeline(
     instructionUsesRs2Opcode(decodeOpcode)
   }
 
-  val executeForwardActive = if (separateDecodeExecute && !serializedInstructions) {
+  val executeForwardActive = if (
+    separateDecodeExecute && !serializedInstructions && !forwardInExecute
+  ) {
     executeValid && registerWrite && !illegal && !memoryRead && !atomicValid && rd =/= 0.U
   } else {
     false.B
@@ -652,9 +738,14 @@ class RvaiPipeline(
         executeForwardActive && rd === address,
         result,
         Mux(
-          writebackActive && executeMemoryWriteback.rd === address,
-          writebackData,
-          registers(address)
+          !forwardInExecute.B && memoryForwardActive &&
+            executeMemoryWriteback.rd === address,
+          executeMemoryWriteback.result,
+          Mux(
+            writebackForwardActive && writebackRd === address,
+            committedData,
+            registers(address)
+          )
         )
       )
     )
@@ -746,6 +837,17 @@ class RvaiPipeline(
   }
   io.instructionNextAddress := fetchPcNext
 
+  private def advanceMemoryToWriteback(): Unit = {
+    memoryWriteback.valid := executeMemoryWriteback.valid
+    memoryWriteback.pc := executeMemoryWriteback.pc
+    memoryWriteback.instruction := executeMemoryWriteback.instruction
+    memoryWriteback.rd := executeMemoryWriteback.rd
+    memoryWriteback.data := writebackData
+    memoryWriteback.registerWrite := executeMemoryWriteback.registerWrite
+    memoryWriteback.illegal := executeMemoryWriteback.illegal
+    memoryWritebackConsumed := false.B
+  }
+
   if (serializedInstructions) {
     when(reset.asBool) {
       serializedState := SerializedState.fetch
@@ -805,6 +907,10 @@ class RvaiPipeline(
       }
     }
   } else when(illegalTrap) {
+    if (separateWritebackStage) {
+      memoryWriteback.valid := false.B
+      memoryWritebackConsumed := false.B
+    }
     if (!mergeExecuteMemory) {
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
@@ -812,13 +918,27 @@ class RvaiPipeline(
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
   }.elsewhen(io.memoryStall) {
-    // Hold every stage until the cache hierarchy completes the outstanding access.
+    // Hold fetch through memory until the cache hierarchy completes the access.
+    // A distinct writeback stage is older than the blocked memory instruction.
+    // Retain its payload for forwarding, but mark it consumed after committing
+    // once so a prolonged memory stall cannot repeat retirement or a write.
+    if (separateWritebackStage) {
+      when(memoryWriteback.valid) {
+        memoryWritebackConsumed := true.B
+      }
+    }
   }.elsewhen(executionStall) {
     // Let the older instruction retire while execute, decode, and fetch hold.
+    if (separateWritebackStage) {
+      advanceMemoryToWriteback()
+    }
     if (!mergeExecuteMemory) {
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
   }.otherwise {
+    if (separateWritebackStage) {
+      advanceMemoryToWriteback()
+    }
     if (!mergeExecuteMemory) {
       executeMemoryWriteback.valid := executeValid
       executeMemoryWriteback.pc := executePc
@@ -907,6 +1027,10 @@ class RvaiPipeline(
       decodeExecute.valid := false.B
       if (!mergeExecuteMemory) {
         executeMemoryWriteback.valid := false.B
+      }
+      if (separateWritebackStage) {
+        memoryWriteback.valid := false.B
+        memoryWritebackConsumed := false.B
       }
     }
   }
