@@ -283,7 +283,13 @@ private[riscvai] class DataCache(
             pendingWriteAddress := io.cpuAddress
             pendingWriteMask := io.cpuWriteMask
             pendingReadData := Mux(requestHit, hitData, 0.U)
-            pendingCacheHit := requestHit
+            // A write is always forwarded to external memory. Invalidate the
+            // local line instead of relying on the pipelined hit prediction:
+            // a stale prediction must never leave an old cached copy behind.
+            valid(cpuIndex) := false.B
+            // AMOs retain the extra cache-write state as a calculation stage;
+            // the line remains invalid and the updated value is written through.
+            pendingCacheHit := requestHit && io.cpuRead
             state := State.prepareWrite
           }.elsewhen(io.cpuRead && !io.cpuAccept) {
             pendingReadData := hitData
@@ -293,7 +299,10 @@ private[riscvai] class DataCache(
           pendingWriteAddress := io.cpuAddress
           pendingWriteMask := io.cpuWriteMask
           pendingReadData := Mux(requestHit, hitData, 0.U)
-          pendingCacheHit := requestHit
+          when(io.cpuWrite) {
+            valid(cpuIndex) := false.B
+          }
+          pendingCacheHit := requestHit && (!io.cpuWrite || io.cpuRead)
           state := State.lookup
         }
       }

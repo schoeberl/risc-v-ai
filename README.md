@@ -146,10 +146,12 @@ misses and all write-through stores still hold the whole pipeline until they
 complete. Both caches' resettable valid bits remain register arrays.
 
 The instruction cache is read-only and is invalidated by `FENCE.I`. The data
-cache is write-through: loads allocate a line, stores update a resident line and
-are always forwarded to memory, and store misses write around the cache. An AMO
-miss refills before performing its read-modify-write so the architectural old
-value remains correct.
+cache is write-through: loads allocate a line, while every store is forwarded
+to memory and invalidates its indexed cache line. Conservative store
+invalidation avoids retaining stale data when a pipelined store-tag prediction
+is unavailable; a later load refills the updated line. An AMO miss refills
+before performing its read-modify-write so the architectural old value remains
+correct.
 
 Both caches share a single 32-bit memory port. A request consists of `request`,
 `write`, `address`, `writeData`, and four byte write strobes. The selected cache
@@ -163,7 +165,7 @@ The default cached tops infer synchronous memories, which FPGA tools can map to
 block RAM. All three `Sky130CachedRvai*` tops instead instantiate two
 single-port, rising-edge synchronous `CF_SRAM_1024x32` macros. Reads and writes
 do not overlap architecturally: a
-refill or resident-store update takes port priority while its speculative read
+refill or cache-maintenance write takes port priority while its speculative read
 result is ignored. The caches remain 1 KiB and tie the macro's upper two address
 bits low; increasing both caches to the full 4 KiB capacity is a separate
 experiment. There are no OpenRAM macro instances in the current RTL or physical
@@ -308,6 +310,51 @@ The three-stage data-cache controller registers the synchronous tag decision and
 uses a lookup wait state. Consequently a data-cache read hit takes an extra cycle
 in this version. The four-stage pipeline can start the tag lookup one stage
 earlier and retains its pipelined hit path.
+
+### CoreMark simulation comparison
+
+The repository pins the official, unmodified
+[EEMBC CoreMark](https://github.com/eembc/coremark) sources as a Git submodule at
+commit `1f483d5b8316753a742cbf5590caf5bd0a4e4777`. Clone it and run the complete
+comparison with:
+
+```sh
+git submodule update --init
+make coremark
+```
+
+This requires `riscv64-unknown-elf-gcc`, `objcopy`, and `size`. The checked-in
+bare-metal port builds one performance-seed iteration using GCC 13.2.0 with
+`-O2 -march=rv32im_zicsr -mabi=ilp32`, a static 2,000-byte CoreMark data block,
+and no libc. The ELF contains 10,608 bytes of text, 16 bytes of initialized data,
+and 2,028 bytes of BSS. The same binary runs on all three cached pipelines.
+
+Every row below passed CoreMark's algorithm and data-type CRC checks. `Memory
+wait` is the number of full cycles between an external request and `ready`; zero
+means a combinational response in the request cycle. Cycles and retired
+instructions come from the core's `cycle` and `instret` CSRs around the timed
+region. The transfer columns count accesses on the shared external port.
+Projected iterations/s combines cycles per iteration with each pipeline's
+cache-inclusive Sky130 Fmax from the PPA table above. CoreMark exposed the
+store-cache correctness issue fixed in this change, so these projections use
+the immediately preceding PPA measurements; rerun synthesis before treating
+them as updated physical-design results.
+
+| Pipeline | Memory wait | Cycles/iteration | Retired instructions | CPI | Projected iterations/s | External reads | External writes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Four stages | 0 | 589,095 | 313,332 | 1.880 | 83.62 | 65,568 | 16,478 |
+| Three stages | 0 | 691,317 | 313,332 | 2.206 | 65.80 | 104,332 | 16,478 |
+| Three stages + fetch predecode | 0 | 691,317 | 313,332 | 2.206 | 62.69 | 104,332 | 16,478 |
+| Four stages | 5 | 975,490 | 313,332 | 3.113 | 50.50 | 65,568 | 16,478 |
+| Three stages | 5 | 1,267,291 | 313,332 | 4.045 | 35.90 | 104,332 | 16,478 |
+| Three stages + fetch predecode | 5 | 1,267,291 | 313,332 | 4.045 | 34.20 | 104,332 | 16,478 |
+
+These are short RTL-simulation comparison results, not reportable CoreMark
+scores. CoreMark's official rules require at least ten seconds of execution and
+both performance- and validation-seed runs. The projected figures above are
+therefore deliberately labeled iterations/s rather than `CoreMark 1.0` scores.
+They are useful for comparing these pipelines because the program, compiler,
+cache geometry, and memory model are otherwise identical.
 
 ### Historical PPA experiments
 

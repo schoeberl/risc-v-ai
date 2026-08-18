@@ -1,4 +1,4 @@
-.PHONY: rtl rtl-three-stages rtl-three-stages-predecode rtl-cached rtl-sky130-cached \
+.PHONY: coremark coremark-build rtl rtl-three-stages rtl-three-stages-predecode rtl-cached rtl-sky130-cached \
 	rtl-sky130-cached-three-stages rtl-sky130-cached-three-stages-predecode ppa-sky130 \
 	ppa-sky130-three-stages ppa-sky130-cached \
 	ppa-sky130-three-stages-predecode ppa-sky130-sram-cached \
@@ -8,6 +8,13 @@ RTL_DIR := generated
 LIBRELANE_ROOT ?= $(HOME)/librelane
 SKY130_PDK_ROOT ?= $(HOME)/.ciel
 PPA_RUN_TAG ?= 100mhz
+COREMARK_BIN := $(CURDIR)/build/coremark/coremark.bin
+
+coremark-build:
+	$(MAKE) -C benchmarks/riscvai-coremark all
+
+coremark: coremark-build
+	COREMARK_BIN=$(COREMARK_BIN) sbt "testOnly riscvai.CoreMarkBenchmarkSpec"
 
 rtl:
 	sbt "runMain riscvai.Elaborate --target-dir $(RTL_DIR)"

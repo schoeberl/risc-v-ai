@@ -225,6 +225,27 @@ abstract class CachedRvaiPipelineSpec(
       }
     }
 
+    "does not retain stale data after writing a cached word" in {
+      simulate(generate) { dut =>
+        initialize(dut)
+        val memory = collection.mutable.Map[BigInt, BigInt](
+          BigInt(0x00) -> iType(64, 0, 0, 1),           // addi x1, x0, 64
+          BigInt(0x04) -> iType(0, 1, 2, 2, 0x03),      // lw   x2, 0(x1)
+          BigInt(0x08) -> iType(99, 0, 0, 3),           // addi x3, x0, 99
+          BigInt(0x0c) -> sType(0, 3, 1, 2),            // sw   x3, 0(x1)
+          BigInt(0x10) -> iType(0, 1, 2, 4, 0x03),      // lw   x4, 0(x1)
+          BigInt(0x14) -> jType(0, 0),                  // loop
+          BigInt(0x40) -> BigInt(17)
+        )
+
+        runWithMemory(dut, memory, cycles = 260)
+
+        memory(64) mustBe 99
+        expectRegister(dut, 2, 17)
+        expectRegister(dut, 4, 99)
+      }
+    }
+
     "invalidates and refills the instruction cache after FENCE.I" in {
       simulate(generate) { dut =>
         initialize(dut)
