@@ -172,6 +172,7 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
     Files.isRegularFile(binary) mustBe true
 
     val allConfigurations = Seq(
+      Configuration("Two stages", 49.97, () => new CachedRvaiTwoStages()),
       Configuration("Three stages", 46.58, () => new CachedRvaiThreeStages()),
       Configuration(
         "Three stages + fetch predecode",

@@ -39,3 +39,16 @@ class RvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
       separateDecodeExecute = true,
       mergeExecuteMemory = true
     )
+
+/** A two-stage processor with instruction/decode/execute in stage 1 and the
+  * synchronous data-cache access plus writeback in stage 2.
+  *
+  * The instruction cache's synchronous address register is the fetch boundary,
+  * so the core does not add a fetch/decode register of its own.
+  */
+class RvaiTwoStages(resetVector: BigInt = 0)
+    extends RvaiPipeline(
+      resetVector,
+      separateDecodeExecute = false,
+      executeFromInstructionPort = true
+    )

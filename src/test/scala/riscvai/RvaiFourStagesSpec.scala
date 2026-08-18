@@ -388,6 +388,7 @@ abstract class RvaiPipelineSpec(
           BigInt(0x08) -> BigInt("ffffffff", 16),        // illegal instruction
           BigInt(0x0c) -> iType(7, 0, 0, 2),             // addi  x2, x0, 7
           BigInt(0x10) -> csrType(0x300, 0, 2, 6),       // csrr  x6, mstatus
+          BigInt(0x14) -> BigInt("0000006f", 16),        // loop
           BigInt(0x40) -> csrType(0x342, 0, 2, 3),       // csrr  x3, mcause
           BigInt(0x44) -> csrType(0x341, 0, 2, 4),       // csrr  x4, mepc
           BigInt(0x48) -> csrType(0x343, 0, 2, 5),       // csrr  x5, mtval
@@ -429,5 +430,12 @@ class RvaiThreeStagesExecuteMemorySpec
     extends RvaiPipelineSpec(
       "RvaiThreeStagesExecuteMemory",
       new RvaiThreeStagesExecuteMemory,
+      expectedLoadUseStalls = 0
+    )
+
+class RvaiTwoStagesSpec
+    extends RvaiPipelineSpec(
+      "RvaiTwoStages",
+      new RvaiTwoStages,
       expectedLoadUseStalls = 0
     )

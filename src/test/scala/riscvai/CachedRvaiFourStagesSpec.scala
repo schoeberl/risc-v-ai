@@ -324,3 +324,10 @@ class CachedRvaiThreeStagesExecuteMemorySpec
       new CachedRvaiThreeStagesExecuteMemory(cacheBytes = 256, lineBytes = 16),
       minimumRetirementsDuringMiss = 0
     )
+
+class CachedRvaiTwoStagesSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiTwoStages",
+      new CachedRvaiTwoStages(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 0
+    )

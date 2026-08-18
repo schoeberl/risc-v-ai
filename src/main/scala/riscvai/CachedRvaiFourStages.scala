@@ -12,10 +12,12 @@ class CachedRvaiPipeline(
     useAsicSram: Boolean = false,
     threeStages: Boolean = false,
     predecodeInFetch: Boolean = false,
-    executeMemoryInThirdStage: Boolean = false
+    executeMemoryInThirdStage: Boolean = false,
+    twoStages: Boolean = false
 ) extends Module {
   require(!predecodeInFetch || threeStages)
   require(!executeMemoryInThirdStage || threeStages)
+  require(!twoStages || (!threeStages && !predecodeInFetch && !executeMemoryInThirdStage))
 
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
@@ -36,7 +38,9 @@ class CachedRvaiPipeline(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = if (executeMemoryInThirdStage) {
+  private val core = if (twoStages) {
+    Module(new RvaiTwoStages(resetVector))
+  } else if (executeMemoryInThirdStage) {
     Module(new RvaiThreeStagesExecuteMemory(resetVector))
   } else if (predecodeInFetch) {
     Module(new RvaiThreeStagesPredecode(resetVector))
@@ -159,6 +163,20 @@ class CachedRvaiThreeStagesExecuteMemory(
       executeMemoryInThirdStage = true
     )
 
+/** Two-stage core with private caches and one shared bus. */
+class CachedRvaiTwoStages(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useAsicSram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useAsicSram,
+      twoStages = true
+    )
+
 /** Sky130 implementation with CF SRAM data and tag macros for both caches. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
@@ -189,6 +207,15 @@ class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
 /** Merged execute/memory three-stage implementation using CF SRAM macros. */
 class Sky130CachedRvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesExecuteMemory(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useAsicSram = true
+    )
+
+/** Two-stage implementation using CF SRAM data and tag macros. */
+class Sky130CachedRvaiTwoStages(resetVector: BigInt = 0)
+    extends CachedRvaiTwoStages(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

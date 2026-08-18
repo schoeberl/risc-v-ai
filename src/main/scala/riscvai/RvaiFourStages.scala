@@ -48,7 +48,8 @@ class RvaiPipeline(
     resetVector: BigInt,
     separateDecodeExecute: Boolean,
     predecodeInFetch: Boolean = false,
-    mergeExecuteMemory: Boolean = false
+    mergeExecuteMemory: Boolean = false,
+    executeFromInstructionPort: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
@@ -61,6 +62,11 @@ class RvaiPipeline(
   require(
     !mergeExecuteMemory || !predecodeInFetch,
     "merged execute/memory does not use fetch predecode"
+  )
+  require(
+    !executeFromInstructionPort || (!separateDecodeExecute && !predecodeInFetch &&
+      !mergeExecuteMemory),
+    "direct instruction-port execution is a distinct two-stage organization"
   )
 
   val io = IO(new Bundle {
@@ -249,17 +255,27 @@ class RvaiPipeline(
     registers(io.debugRegisterAddress)
   )
 
-  val instruction = if (separateDecodeExecute) {
+  val instruction = if (executeFromInstructionPort) {
+    io.instruction
+  } else if (separateDecodeExecute) {
     decodeExecute.instruction
   } else {
     fetchDecodeExecute.instruction
   }
-  val executeValid = if (separateDecodeExecute) {
+  val executeValid = if (executeFromInstructionPort) {
+    io.instructionValid
+  } else if (separateDecodeExecute) {
     decodeExecute.valid
   } else {
     fetchDecodeExecute.valid
   }
-  val executePc = if (separateDecodeExecute) decodeExecute.pc else fetchDecodeExecute.pc
+  val executePc = if (executeFromInstructionPort) {
+    fetchPc
+  } else if (separateDecodeExecute) {
+    decodeExecute.pc
+  } else {
+    fetchDecodeExecute.pc
+  }
   val opcode = instruction(6, 0)
   val rd = instruction(11, 7)
   val funct3 = instruction(14, 12)
@@ -660,7 +676,7 @@ class RvaiPipeline(
     executeMemoryWriteback.rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
       (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
-  val unavailableResultHazard = if (mergeExecuteMemory) {
+  val unavailableResultHazard = if (mergeExecuteMemory || executeFromInstructionPort) {
     false.B
   } else if (separateDecodeExecute) {
     executeResultHazard
@@ -753,23 +769,29 @@ class RvaiPipeline(
         decodeExecute.rs2Value := decodeRs2Value
         decodeExecute.memoryAddress := decodeMemoryAddress
       }
-      fetchDecodeExecute.valid := io.instructionValid
-      when(io.instructionValid) {
-        fetchDecodeExecute.pc := fetchPc
-        fetchDecodeExecute.instruction := io.instruction
-        val fetchedOpcode = io.instruction(6, 0)
-        val fetchedFunct3 = io.instruction(14, 12)
-        val fetchedFunct7 = io.instruction(31, 25)
-        fetchDecodeExecute.usesRs1 := instructionUsesRs1Opcode(
-          fetchedOpcode,
-          io.instruction(14, 12)
-        )
-        fetchDecodeExecute.usesRs2 := instructionUsesRs2Opcode(fetchedOpcode)
-        fetchDecodeExecute.divide := fetchedOpcode === OpcodeOp &&
-          fetchedFunct7 === "b0000001".U && fetchedFunct3(2)
-        fetchDecodeExecute.multiply := fetchedOpcode === OpcodeOp &&
-          fetchedFunct7 === "b0000001".U && !fetchedFunct3(2)
-        fetchPc := fetchPc + 4.U
+      if (executeFromInstructionPort) {
+        when(io.instructionValid) {
+          fetchPc := fetchPc + 4.U
+        }
+      } else {
+        fetchDecodeExecute.valid := io.instructionValid
+        when(io.instructionValid) {
+          fetchDecodeExecute.pc := fetchPc
+          fetchDecodeExecute.instruction := io.instruction
+          val fetchedOpcode = io.instruction(6, 0)
+          val fetchedFunct3 = io.instruction(14, 12)
+          val fetchedFunct7 = io.instruction(31, 25)
+          fetchDecodeExecute.usesRs1 := instructionUsesRs1Opcode(
+            fetchedOpcode,
+            io.instruction(14, 12)
+          )
+          fetchDecodeExecute.usesRs2 := instructionUsesRs2Opcode(fetchedOpcode)
+          fetchDecodeExecute.divide := fetchedOpcode === OpcodeOp &&
+            fetchedFunct7 === "b0000001".U && fetchedFunct3(2)
+          fetchDecodeExecute.multiply := fetchedOpcode === OpcodeOp &&
+            fetchedFunct7 === "b0000001".U && !fetchedFunct3(2)
+          fetchPc := fetchPc + 4.U
+        }
       }
     }
   }
