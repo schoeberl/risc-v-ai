@@ -1,6 +1,7 @@
 # risc-v-ai
 
 [![CI](https://github.com/schoeberl/risc-v-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/schoeberl/risc-v-ai/actions/workflows/ci.yml)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/schoeberl/risc-v-ai)
 
 An experimental AI generated RISC-V processor written in
 [Chisel](https://www.chisel-lang.org/).
@@ -11,6 +12,25 @@ An experimental AI generated RISC-V processor written in
 - sbt
 - Verilator (for simulation tests)
 - Nix (for the pinned LibreLane environment used by the Sky130 PPA flows)
+
+### GitHub Codespaces
+
+Use the **Open in GitHub Codespaces** badge above, or select **Code**,
+**Codespaces**, **Create codespace on main** on GitHub. The checked-in dev
+container provides JDK 17, sbt, Verilator, the RISC-V bare-metal compiler, and
+Nix. Its first-run setup initializes the pinned CoreMark and LibreLane
+submodules and downloads the Scala dependencies.
+
+After the terminal opens, verify the development environment with:
+
+```sh
+sbt test
+make coremark
+```
+
+The RTL and simulation workflows work without additional configuration.
+Sky130 PPA also needs the Sky130 PDK below `~/.ciel` and the licensed CF SRAM
+views; provide those separately as Codespaces secrets or secure artifacts.
 
 ## Commands
 
