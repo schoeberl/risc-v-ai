@@ -10,6 +10,7 @@ An experimental AI generated RISC-V processor written in
 - JDK 17 or newer
 - sbt
 - Verilator (for simulation tests)
+- Nix (for the pinned LibreLane environment used by the Sky130 PPA flows)
 
 ## Commands
 
@@ -230,30 +231,42 @@ Generate the cached Sky130 fetch-predecode variant with:
 make rtl-sky130-cached-three-stages-predecode
 ```
 
-The generated files are written to `generated/`. Run the 100 MHz Sky130A
-LibreLane flows including both cache SRAMs with:
+The generated files are written to `generated/`. Initialize the pinned CoreMark
+and LibreLane submodules after cloning with:
 
 ```sh
-make ppa-sky130-sram-cached \
-  PPA_RUN_TAG=cf-pipelines-four-100mhz
-python3 ppa/librelane/report_metrics.py \
-  cf-pipelines-four-100mhz
-
-make ppa-sky130-sram-cached-three-stages \
-  PPA_RUN_TAG=cf-pipelines-three-100mhz
-python3 ppa/librelane/report_metrics.py \
-  cf-pipelines-three-100mhz
-
-make ppa-sky130-sram-cached-three-stages-predecode \
-  PPA_RUN_TAG=cf-pipelines-three-predecode-100mhz
-python3 ppa/librelane/report_metrics.py \
-  cf-pipelines-three-predecode-100mhz
+git submodule update --init
 ```
 
-By default, the Make target uses LibreLane from `~/librelane` and the PDK from
-`~/.ciel`. Override `LIBRELANE_ROOT` or `SKY130_PDK_ROOT` when they are installed
-elsewhere. LibreLane run data is written below `ppa/librelane/runs/` and is not
-tracked by Git.
+Run the 100 MHz Sky130A post-CTS comparison including both cache SRAMs with:
+
+```sh
+make ppa-sky130-sram-cached-post-cts \
+  PPA_RUN_TAG=unified-cache-four-100mhz
+python3 ppa/librelane/report_metrics.py \
+  unified-cache-four-100mhz
+
+make ppa-sky130-sram-cached-three-stages-post-cts \
+  PPA_RUN_TAG=unified-cache-three-100mhz
+python3 ppa/librelane/report_metrics.py \
+  unified-cache-three-100mhz
+
+make ppa-sky130-sram-cached-three-stages-predecode-post-cts \
+  PPA_RUN_TAG=unified-cache-three-predecode-100mhz
+python3 ppa/librelane/report_metrics.py \
+  unified-cache-three-predecode-100mhz
+```
+
+The post-CTS targets stop at `OpenROAD.STAMidPNR-1`, exactly the checkpoint read
+by `report_metrics.py`. They skip `Checker.PowerGridViolations` because the
+licensed CF SRAM abstract views do not provide the complete power connectivity
+needed by that checker. The original targets without the `-post-cts` suffix
+remain available for complete physical-design runs.
+
+By default, the Make targets use the pinned LibreLane submodule at
+`external/librelane` and the PDK from `~/.ciel`. Override `LIBRELANE_ROOT` or
+`SKY130_PDK_ROOT` when needed. LibreLane run data is written below
+`ppa/librelane/runs/` and is not tracked by Git.
 
 ### SRAM backend change
 

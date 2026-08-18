@@ -2,13 +2,16 @@
 	rtl-sky130-cached-three-stages rtl-sky130-cached-three-stages-predecode ppa-sky130 \
 	ppa-sky130-three-stages ppa-sky130-cached \
 	ppa-sky130-three-stages-predecode ppa-sky130-sram-cached \
-	ppa-sky130-sram-cached-three-stages ppa-sky130-sram-cached-three-stages-predecode
+	ppa-sky130-sram-cached-three-stages ppa-sky130-sram-cached-three-stages-predecode \
+	ppa-sky130-sram-cached-post-cts ppa-sky130-sram-cached-three-stages-post-cts \
+	ppa-sky130-sram-cached-three-stages-predecode-post-cts
 
 RTL_DIR := generated
-LIBRELANE_ROOT ?= $(HOME)/librelane
+LIBRELANE_ROOT ?= $(CURDIR)/external/librelane
 SKY130_PDK_ROOT ?= $(HOME)/.ciel
 PPA_RUN_TAG ?= 100mhz
 COREMARK_BIN := $(CURDIR)/build/coremark/coremark.bin
+POST_CTS_ARGS := --skip Checker.PowerGridViolations --to OpenROAD.STAMidPNR-1
 
 coremark-build:
 	$(MAKE) -C benchmarks/riscvai-coremark all
@@ -64,3 +67,15 @@ ppa-sky130-sram-cached-three-stages: rtl-sky130-cached-three-stages
 ppa-sky130-sram-cached-three-stages-predecode: rtl-sky130-cached-three-stages-predecode
 	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
 	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) ppa/librelane/config-sram-cached-three-stages-predecode.yaml'
+
+ppa-sky130-sram-cached-post-cts: rtl-sky130-cached
+	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
+	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached.yaml'
+
+ppa-sky130-sram-cached-three-stages-post-cts: rtl-sky130-cached-three-stages
+	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
+	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached-three-stages.yaml'
+
+ppa-sky130-sram-cached-three-stages-predecode-post-cts: rtl-sky130-cached-three-stages-predecode
+	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
+	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached-three-stages-predecode.yaml'
