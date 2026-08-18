@@ -17,6 +17,7 @@ class CachedRvaiPipeline(
 
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
+    val memoryInstruction = Output(Bool())
     val memoryWrite = Output(Bool())
     val memoryAddress = Output(UInt(32.W))
     val memoryWriteData = Output(UInt(32.W))
@@ -49,8 +50,7 @@ class CachedRvaiPipeline(
   private val dataCache = Module(new DataCache(
     cacheBytes,
     lineBytes,
-    useAsicSram,
-    registeredTagHit = !threeStages
+    useAsicSram
   ))
   private val arbiter = Module(new CacheArbiter)
 
@@ -67,7 +67,6 @@ class CachedRvaiPipeline(
   dataCache.io.cpuWrite := core.io.dataWriteEnable
   dataCache.io.cpuAddress := core.io.dataAddress
   dataCache.io.cpuNextAddress := core.io.dataNextAddress
-  dataCache.io.cpuTagNextAddress := core.io.dataTagNextAddress
   dataCache.io.cpuWriteData := core.io.dataWriteData
   dataCache.io.cpuWriteMask := core.io.dataWriteMask
   core.io.dataReadData := dataCache.io.cpuReadData
@@ -83,6 +82,7 @@ class CachedRvaiPipeline(
   arbiter.io.memoryReady := io.memoryReady
   arbiter.io.memoryReadData := io.memoryReadData
   io.memoryRequest := arbiter.io.memoryRequest
+  io.memoryInstruction := arbiter.io.memoryInstruction
   io.memoryWrite := arbiter.io.memoryWrite
   io.memoryAddress := arbiter.io.memoryAddress
   io.memoryWriteData := arbiter.io.memoryWriteData

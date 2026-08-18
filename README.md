@@ -137,13 +137,14 @@ fetch-PC register capture the same value. After a line is resident, consecutive
 instruction hits therefore sustain one instruction per clock without stalling
 the core. On an instruction miss, fetch holds its PC and inserts invalid bubbles
 while older instructions continue through the pipeline; fetch resumes after the
-four-word refill. The data-cache tag lookup starts from the decode-stage
-effective address; execute compares and registers the synchronous tag result
-while the data SRAM captures the execute-stage address. Memory/writeback thus
-receives aligned SRAM data and registered hit state, so a read hit can complete
-without a cache-induced stall, including for consecutive loads. Data-cache
-misses and all write-through stores still hold the whole pipeline until they
-complete. Both caches' resettable valid bits remain register arrays.
+four-word refill. All pipeline organizations use the same `DataCache` module and
+the same request interface. Execute drives the next effective address into its
+synchronous tag and data memories; memory/writeback receives the aligned tag and
+data result in the following cycle. A resident load therefore completes without
+a cache-induced stall, and consecutive loads sustain one hit per cycle in every
+pipeline organization. Data-cache misses and all write-through stores still hold
+the whole pipeline until they complete. Both caches' resettable valid bits remain
+register arrays.
 
 The instruction cache is read-only and is invalidated by `FENCE.I`. The data
 cache is write-through: loads allocate a line, while every store is forwarded
@@ -154,10 +155,12 @@ before performing its read-modify-write so the architectural old value remains
 correct.
 
 Both caches share a single 32-bit memory port. A request consists of `request`,
-`write`, `address`, `writeData`, and four byte write strobes. The selected cache
-holds those signals until memory raises `ready`; load/refill data is returned on
-`readData` in that cycle. Arbitration gives an older data access priority over
-speculative instruction fetch and locks the grant across memory wait states.
+`write`, `address`, `writeData`, and four byte write strobes. The cached top also
+exports `memoryInstruction` to identify instruction-refill reads for bus traffic
+measurement. The selected cache holds its signals until memory raises `ready`;
+load/refill data is returned on `readData` in that cycle. Arbitration gives an
+older data access priority over speculative instruction fetch and locks the grant
+across memory wait states.
 There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
@@ -306,10 +309,10 @@ back into fetch reduces Fmax by a further 4.7% with essentially unchanged area
 and power. Power is estimated at the requested 100 MHz activity point even
 though none of the designs closes timing at 100 MHz.
 
-The three-stage data-cache controller registers the synchronous tag decision and
-uses a lookup wait state. Consequently a data-cache read hit takes an extra cycle
-in this version. The four-stage pipeline can start the tag lookup one stage
-earlier and retains its pipelined hit path.
+These physical results predate the unified execute-to-memory data-cache lookup
+described above. They remain the most recent like-for-like CF-SRAM pipeline
+comparison, but synthesis must be rerun before attributing an Fmax or PPA change
+to the unified cache controller.
 
 ### CoreMark simulation comparison
 
@@ -333,21 +336,28 @@ Every row below passed CoreMark's algorithm and data-type CRC checks. `Memory
 wait` is the number of full cycles between an external request and `ready`; zero
 means a combinational response in the request cycle. Cycles and retired
 instructions come from the core's `cycle` and `instret` CSRs around the timed
-region. The transfer columns count accesses on the shared external port.
+region. The transfer columns count accesses on the shared external port and
+split reads by the cache selected by the arbiter.
 Projected iterations/s combines cycles per iteration with each pipeline's
 cache-inclusive Sky130 Fmax from the PPA table above. CoreMark exposed the
 store-cache correctness issue fixed in this change, so these projections use
 the immediately preceding PPA measurements; rerun synthesis before treating
 them as updated physical-design results.
 
-| Pipeline | Memory wait | Cycles/iteration | Retired instructions | CPI | Projected iterations/s | External reads | External writes |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Four stages | 0 | 589,095 | 313,332 | 1.880 | 83.62 | 65,568 | 16,478 |
-| Three stages | 0 | 691,317 | 313,332 | 2.206 | 65.80 | 104,332 | 16,478 |
-| Three stages + fetch predecode | 0 | 691,317 | 313,332 | 2.206 | 62.69 | 104,332 | 16,478 |
-| Four stages | 5 | 975,490 | 313,332 | 3.113 | 50.50 | 65,568 | 16,478 |
-| Three stages | 5 | 1,267,291 | 313,332 | 4.045 | 35.90 | 104,332 | 16,478 |
-| Three stages + fetch predecode | 5 | 1,267,291 | 313,332 | 4.045 | 34.20 | 104,332 | 16,478 |
+| Pipeline | Memory wait | Cycles/iteration | Retired instructions | CPI | Projected iterations/s | I-cache reads | D-cache reads | External writes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Four stages | 0 | 574,974 | 313,332 | 1.835 | 85.67 | 11,824 | 53,768 | 16,478 |
+| Three stages | 0 | 531,089 | 313,332 | 1.695 | 85.65 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 0 | 531,089 | 313,332 | 1.695 | 81.61 | 11,516 | 53,768 | 16,478 |
+| Four stages | 5 | 961,423 | 313,332 | 3.068 | 51.24 | 11,824 | 53,768 | 16,478 |
+| Three stages | 5 | 916,251 | 313,332 | 2.924 | 49.65 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 5 | 916,251 | 313,332 | 2.924 | 47.30 | 11,516 | 53,768 | 16,478 |
+
+The identical 53,768 data reads and 16,478 writes demonstrate that all three
+pipeline organizations now use equivalent data-cache behavior. The four-stage
+core performs 308 additional instruction reads because its deeper pipeline
+allows more speculative fetches to reach the instruction cache around control
+transfers; this is a pipeline-front-end effect, not a different cache policy.
 
 These are short RTL-simulation comparison results, not reportable CoreMark
 scores. CoreMark's official rules require at least ten seconds of execution and

@@ -20,6 +20,7 @@ private[riscvai] class CacheArbiter extends Module {
     val data = Flipped(new CacheMemoryPort)
 
     val memoryRequest = Output(Bool())
+    val memoryInstruction = Output(Bool())
     val memoryWrite = Output(Bool())
     val memoryAddress = Output(UInt(32.W))
     val memoryWriteData = Output(UInt(32.W))
@@ -50,6 +51,7 @@ private[riscvai] class CacheArbiter extends Module {
     io.data.request,
     Mux(selectInstruction, io.instruction.request, false.B)
   )
+  io.memoryInstruction := selectInstruction && io.memoryRequest
   io.memoryWrite := selectData && io.data.write
   io.memoryAddress := Mux(selectData, io.data.address, io.instruction.address)
   io.memoryWriteData := Mux(selectData, io.data.writeData, io.instruction.writeData)

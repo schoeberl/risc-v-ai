@@ -61,7 +61,6 @@ class RvaiPipeline(
 
     val dataAddress = Output(UInt(32.W))
     val dataNextAddress = Output(UInt(32.W))
-    val dataTagNextAddress = Output(UInt(32.W))
     val dataReadData = Input(UInt(32.W))
     val dataAtomicReadData = Input(UInt(32.W))
     val dataReadEnable = Output(Bool())
@@ -601,19 +600,6 @@ class RvaiPipeline(
 
   val decodeRs1Value = readDecodeRegister(decodeRs1)
   val decodeRs2Value = readDecodeRegister(decodeRs2)
-  val decodeImmediateI = signExtend(decodeInstruction(31, 20), 12)
-  val decodeImmediateS = signExtend(
-    Cat(decodeInstruction(31, 25), decodeInstruction(11, 7)),
-    12
-  )
-  val decodeMemoryAddress = MuxLookup(decodeOpcode, 0.U(32.W))(Seq(
-    OpcodeLoad -> (decodeRs1Value + decodeImmediateI),
-    OpcodeStore -> (decodeRs1Value + decodeImmediateS),
-    OpcodeAtomic -> decodeRs1Value
-  ))
-  // Start the synchronous tag lookup in decode. Its result is compared and
-  // registered during execute, before it can affect memory/writeback control.
-  io.dataTagNextAddress := decodeMemoryAddress & "hfffffffc".U
   val executeResultHazard = decodeValid && executeValid && registerWrite && !illegal &&
     (memoryRead || atomicValid) && rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))

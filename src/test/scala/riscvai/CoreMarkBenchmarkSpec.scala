@@ -38,13 +38,15 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
       cycles: BigInt,
       instructions: BigInt,
       iterations: BigInt,
-      reads: Long,
+      instructionReads: Long,
+      dataReads: Long,
       writes: Long,
       fmaxMHz: Double = 0.0
   ) {
     def cpi: Double = cycles.toDouble / instructions.toDouble
     def cyclesPerIteration: Long = cycles.toLong / iterations.toLong
     def projectedIterationsPerSecond: Double = fmaxMHz * 1000000.0 / cyclesPerIteration
+    def reads: Long = instructionReads + dataReads
   }
 
   private case class Configuration(
@@ -83,7 +85,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
     val memory = loadBinary(binary)
     var pending = Option.empty[Pending]
     var cycle = 0L
-    var reads = 0L
+    var instructionReads = 0L
+    var dataReads = 0L
     var writes = 0L
     var finished = false
     val retirementTrace = mutable.Queue.empty[(BigInt, BigInt)]
@@ -107,7 +110,11 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
         memory(transaction.address) = updated
         writes += 1
         if (transaction.address == ResultDone && updated == DoneMagic) finished = true
-      } else reads += 1
+      } else if (dut.io.memoryInstruction.peek().litToBoolean) {
+        instructionReads += 1
+      } else {
+        dataReads += 1
+      }
     }
 
     while (!finished && cycle < maximumCycles) {
@@ -169,7 +176,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
       cycles = memory(ResultCycles),
       instructions = memory(ResultInstret),
       iterations = memory(ResultIterations),
-      reads = reads,
+      instructionReads = instructionReads,
+      dataReads = dataReads,
       writes = writes
     )
   }
@@ -211,8 +219,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
     }
 
     println("\nCoreMark short RTL-simulation comparison (CRC checked, not an official score)")
-    println("| Pipeline | Memory wait | Cycles/iteration | Instructions | CPI | Projected iterations/s | Reads | Writes |")
-    println("|---|---:|---:|---:|---:|---:|---:|---:|")
+    println("| Pipeline | Memory wait | Cycles/iteration | Instructions | CPI | Projected iterations/s | I reads | D reads | Writes |")
+    println("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     results.foreach { result =>
       val cpi = String.format(Locale.ROOT, "%.3f", Double.box(result.cpi))
       val projected = String.format(
@@ -222,7 +230,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
       )
       println(s"| ${result.pipeline} | ${result.latency} | " +
         s"${result.cyclesPerIteration} | ${result.instructions} | $cpi | " +
-        s"$projected | ${result.reads} | ${result.writes} |")
+        s"$projected | ${result.instructionReads} | ${result.dataReads} | " +
+        s"${result.writes} |")
     }
   }
 }
