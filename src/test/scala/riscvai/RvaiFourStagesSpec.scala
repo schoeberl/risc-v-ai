@@ -428,6 +428,14 @@ class RvaiFiveStagesSpec extends RvaiPipelineSpec("RvaiFiveStages", new RvaiFive
 class RvaiSixStagesSpec
     extends RvaiPipelineSpec("RvaiSixStages", new RvaiSixStages, cycleScale = 2)
 
+class RvaiSixStagesMemorySplitSpec
+    extends RvaiPipelineSpec(
+      "RvaiSixStagesMemorySplit",
+      new RvaiSixStagesMemorySplit,
+      expectedLoadUseStalls = 2,
+      cycleScale = 2
+    )
+
 class RvaiThreeStagesSpec extends RvaiPipelineSpec("RvaiThreeStages", new RvaiThreeStages)
 
 class RvaiThreeStagesPredecodeSpec

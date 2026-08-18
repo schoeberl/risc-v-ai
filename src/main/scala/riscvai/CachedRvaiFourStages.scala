@@ -16,17 +16,20 @@ class CachedRvaiPipeline(
     twoStages: Boolean = false,
     multicycle: Boolean = false,
     fiveStages: Boolean = false,
-    sixStages: Boolean = false
+    sixStages: Boolean = false,
+    sixStagesMemorySplit: Boolean = false
 ) extends Module {
   require(!predecodeInFetch || threeStages)
   require(!executeMemoryInThirdStage || threeStages)
   require(!twoStages || (!threeStages && !predecodeInFetch && !executeMemoryInThirdStage))
   require(!multicycle || (!twoStages && !threeStages && !predecodeInFetch &&
-    !executeMemoryInThirdStage && !fiveStages && !sixStages))
+    !executeMemoryInThirdStage && !fiveStages && !sixStages && !sixStagesMemorySplit))
   require(!fiveStages || (!twoStages && !threeStages && !predecodeInFetch &&
-    !executeMemoryInThirdStage && !multicycle && !sixStages))
+    !executeMemoryInThirdStage && !multicycle && !sixStages && !sixStagesMemorySplit))
   require(!sixStages || (!twoStages && !threeStages && !predecodeInFetch &&
-    !executeMemoryInThirdStage && !multicycle && !fiveStages))
+    !executeMemoryInThirdStage && !multicycle && !fiveStages && !sixStagesMemorySplit))
+  require(!sixStagesMemorySplit || (!twoStages && !threeStages && !predecodeInFetch &&
+    !executeMemoryInThirdStage && !multicycle && !fiveStages && !sixStages))
 
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
@@ -47,7 +50,9 @@ class CachedRvaiPipeline(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = if (sixStages) {
+  private val core = if (sixStagesMemorySplit) {
+    Module(new RvaiSixStagesMemorySplit(resetVector))
+  } else if (sixStages) {
     Module(new RvaiSixStages(resetVector))
   } else if (fiveStages) {
     Module(new RvaiFiveStages(resetVector))
@@ -234,6 +239,20 @@ class CachedRvaiSixStages(
       sixStages = true
     )
 
+/** Memory-split six-stage core with private caches and one shared bus. */
+class CachedRvaiSixStagesMemorySplit(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useAsicSram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useAsicSram,
+      sixStagesMemorySplit = true
+    )
+
 /** Sky130 implementation with CF SRAM data and tag macros for both caches. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
@@ -300,6 +319,15 @@ class Sky130CachedRvaiFiveStages(resetVector: BigInt = 0)
 /** Six-stage implementation using CF SRAM data and tag macros. */
 class Sky130CachedRvaiSixStages(resetVector: BigInt = 0)
     extends CachedRvaiSixStages(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useAsicSram = true
+    )
+
+/** Memory-split six-stage implementation using CF SRAM data and tag macros. */
+class Sky130CachedRvaiSixStagesMemorySplit(resetVector: BigInt = 0)
+    extends CachedRvaiSixStagesMemorySplit(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

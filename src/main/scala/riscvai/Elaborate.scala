@@ -41,6 +41,19 @@ object ElaborateSixStages extends App {
   )
 }
 
+/** Emits the six-stage processor with separate memory request and response. */
+object ElaborateSixStagesMemorySplit extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new RvaiSixStagesMemorySplit,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
 /** Emits synthesis-ready SystemVerilog for the three-stage processor. */
 object ElaborateThreeStages extends App {
   ChiselStage.emitSystemVerilogFile(
@@ -149,6 +162,19 @@ object ElaborateSky130CachedFiveStages extends App {
 object ElaborateSky130CachedSixStages extends App {
   ChiselStage.emitSystemVerilogFile(
     new Sky130CachedRvaiSixStages,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
+/** Emits the memory-split six-stage cached processor using Sky130 SRAM macros. */
+object ElaborateSky130CachedSixStagesMemorySplit extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new Sky130CachedRvaiSixStagesMemorySplit,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",

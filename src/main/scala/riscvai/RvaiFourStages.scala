@@ -73,11 +73,18 @@ class RvaiPipeline(
     serializedInstructions: Boolean = false,
     separateWritebackStage: Boolean = false,
     forwardInExecute: Boolean = false,
-    separateDecodeRegisterReadStage: Boolean = false
+    separateDecodeRegisterReadStage: Boolean = false,
+    separateMemoryResponseStage: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
     "fetch predecode is currently supported only by a combined decode/execute stage"
+  )
+  require(
+    !separateMemoryResponseStage ||
+      (separateDecodeExecute && separateWritebackStage && forwardInExecute &&
+        !separateDecodeRegisterReadStage),
+    "a separate memory-response stage extends the conventional five-stage organization"
   )
   require(
     !mergeExecuteMemory || separateDecodeExecute,
@@ -185,6 +192,12 @@ class RvaiPipeline(
   } else {
     Reg(new ExecuteMemoryWriteback)
   }
+  private val memoryResponse = Reg(new ExecuteMemoryWriteback)
+  private val memoryAccess = if (separateMemoryResponseStage) {
+    memoryResponse
+  } else {
+    executeMemoryWriteback
+  }
   private val memoryWriteback = Reg(new MemoryWriteback)
   private val memoryWritebackConsumed = RegInit(false.B)
   private val mergedExecutionComplete = WireDefault(true.B)
@@ -198,14 +211,14 @@ class RvaiPipeline(
   private val csrs = Module(new MachineCsrs)
   private val divider = Module(new IterativeDivider)
   private val multiplier = Module(new PipelinedMultiplier)
-  val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal &&
+  val illegalTrap = memoryAccess.valid && memoryAccess.illegal &&
     !io.memoryStall && mergedExecutionComplete
 
-  val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
+  val memoryByteShift = Cat(memoryAccess.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
   val loadedByte = shiftedReadData(7, 0)
   val loadedHalfword = shiftedReadData(15, 0)
-  val loadData = MuxLookup(executeMemoryWriteback.memoryFunction, io.dataReadData)(Seq(
+  val loadData = MuxLookup(memoryAccess.memoryFunction, io.dataReadData)(Seq(
     "b000".U -> Cat(Fill(24, loadedByte(7)), loadedByte),
     "b001".U -> Cat(Fill(16, loadedHalfword(15)), loadedHalfword),
     "b010".U -> io.dataReadData,
@@ -213,11 +226,11 @@ class RvaiPipeline(
     "b101".U -> Cat(0.U(16.W), loadedHalfword)
   ))
   val scSuccess = reservationValid &&
-    reservationAddress === (executeMemoryWriteback.address & "hfffffffc".U)
+    reservationAddress === (memoryAccess.address & "hfffffffc".U)
   val writebackData = Mux(
-    executeMemoryWriteback.atomicValid && executeMemoryWriteback.atomicOperation === AtomicSc,
+    memoryAccess.atomicValid && memoryAccess.atomicOperation === AtomicSc,
     Mux(scSuccess, 0.U, 1.U),
-    Mux(executeMemoryWriteback.memoryRead, loadData, executeMemoryWriteback.result)
+    Mux(memoryAccess.memoryRead, loadData, memoryAccess.result)
   )
   val writebackValid = if (separateWritebackStage) {
     memoryWriteback.valid && !memoryWritebackConsumed
@@ -269,6 +282,12 @@ class RvaiPipeline(
   } else {
     false.B
   }
+  val memoryResponseForwardActive = if (separateMemoryResponseStage) {
+    memoryAccess.valid && memoryAccess.registerWrite && !memoryAccess.illegal &&
+      memoryAccess.rd =/= 0.U && !memoryAccess.memoryRead && !memoryAccess.atomicValid
+  } else {
+    false.B
+  }
 
   when(writebackActive) {
     registers(writebackRd) := committedData
@@ -276,58 +295,58 @@ class RvaiPipeline(
   registers(0) := 0.U
 
   io.instructionAddress := fetchPc
-  val storeLaneMask = MuxLookup(executeMemoryWriteback.memoryFunction, 0.U(4.W))(Seq(
+  val storeLaneMask = MuxLookup(memoryAccess.memoryFunction, 0.U(4.W))(Seq(
     "b000".U -> 1.U(4.W),
     "b001".U -> 3.U(4.W),
     "b010".U -> 15.U(4.W)
   ))
-  val shiftedStoreMask = (storeLaneMask << executeMemoryWriteback.address(1, 0))(3, 0)
+  val shiftedStoreMask = (storeLaneMask << memoryAccess.address(1, 0))(3, 0)
   val atomicWriteData = MuxLookup(
-    executeMemoryWriteback.atomicOperation,
-    executeMemoryWriteback.storeData
+    memoryAccess.atomicOperation,
+    memoryAccess.storeData
   )(Seq(
-    AtomicAdd -> (io.dataAtomicReadData + executeMemoryWriteback.storeData),
-    AtomicSwap -> executeMemoryWriteback.storeData,
-    AtomicXor -> (io.dataAtomicReadData ^ executeMemoryWriteback.storeData),
-    AtomicAnd -> (io.dataAtomicReadData & executeMemoryWriteback.storeData),
-    AtomicOr -> (io.dataAtomicReadData | executeMemoryWriteback.storeData),
+    AtomicAdd -> (io.dataAtomicReadData + memoryAccess.storeData),
+    AtomicSwap -> memoryAccess.storeData,
+    AtomicXor -> (io.dataAtomicReadData ^ memoryAccess.storeData),
+    AtomicAnd -> (io.dataAtomicReadData & memoryAccess.storeData),
+    AtomicOr -> (io.dataAtomicReadData | memoryAccess.storeData),
     AtomicMin -> Mux(
-      io.dataAtomicReadData.asSInt < executeMemoryWriteback.storeData.asSInt,
+      io.dataAtomicReadData.asSInt < memoryAccess.storeData.asSInt,
       io.dataAtomicReadData,
-      executeMemoryWriteback.storeData
+      memoryAccess.storeData
     ),
     AtomicMax -> Mux(
-      io.dataAtomicReadData.asSInt > executeMemoryWriteback.storeData.asSInt,
+      io.dataAtomicReadData.asSInt > memoryAccess.storeData.asSInt,
       io.dataAtomicReadData,
-      executeMemoryWriteback.storeData
+      memoryAccess.storeData
     ),
     AtomicMinU -> Mux(
-      io.dataAtomicReadData < executeMemoryWriteback.storeData,
+      io.dataAtomicReadData < memoryAccess.storeData,
       io.dataAtomicReadData,
-      executeMemoryWriteback.storeData
+      memoryAccess.storeData
     ),
     AtomicMaxU -> Mux(
-      io.dataAtomicReadData > executeMemoryWriteback.storeData,
+      io.dataAtomicReadData > memoryAccess.storeData,
       io.dataAtomicReadData,
-      executeMemoryWriteback.storeData
+      memoryAccess.storeData
     )
   ))
-  val atomicStoreAllowed = !executeMemoryWriteback.atomicValid ||
-    executeMemoryWriteback.atomicOperation =/= AtomicSc || scSuccess
-  val dataWriteActive = executeMemoryWriteback.valid &&
-    executeMemoryWriteback.memoryWrite && !executeMemoryWriteback.illegal && atomicStoreAllowed
+  val atomicStoreAllowed = !memoryAccess.atomicValid ||
+    memoryAccess.atomicOperation =/= AtomicSc || scSuccess
+  val dataWriteActive = memoryAccess.valid &&
+    memoryAccess.memoryWrite && !memoryAccess.illegal && atomicStoreAllowed
 
-  io.dataAddress := executeMemoryWriteback.address & "hfffffffc".U
-  io.dataReadEnable := executeMemoryWriteback.valid &&
-    executeMemoryWriteback.memoryRead && !executeMemoryWriteback.illegal
+  io.dataAddress := memoryAccess.address & "hfffffffc".U
+  io.dataReadEnable := memoryAccess.valid &&
+    memoryAccess.memoryRead && !memoryAccess.illegal
   io.dataWriteData := Mux(
-    executeMemoryWriteback.atomicValid,
+    memoryAccess.atomicValid,
     Mux(
-      executeMemoryWriteback.atomicOperation === AtomicSc,
-      executeMemoryWriteback.storeData,
+      memoryAccess.atomicOperation === AtomicSc,
+      memoryAccess.storeData,
       atomicWriteData
     ),
-    executeMemoryWriteback.storeData << memoryByteShift
+    memoryAccess.storeData << memoryByteShift
   )
   io.dataWriteMask := Mux(
     dataWriteActive,
@@ -396,9 +415,13 @@ class RvaiPipeline(
         memoryForwardActive && executeMemoryWriteback.rd === address,
         executeMemoryWriteback.result,
         Mux(
-          writebackForwardActive && writebackRd === address,
-          committedData,
-          unforwarded
+          memoryResponseForwardActive && memoryAccess.rd === address,
+          memoryAccess.result,
+          Mux(
+            writebackForwardActive && writebackRd === address,
+            committedData,
+            unforwarded
+          )
         )
       )
     )
@@ -461,9 +484,9 @@ class RvaiPipeline(
   csrs.io.writeData := csrWriteData
   csrs.io.retired := io.retiredValid
   csrs.io.trapEnter := illegalTrap
-  csrs.io.trapPc := executeMemoryWriteback.pc
+  csrs.io.trapPc := memoryAccess.pc
   csrs.io.trapCause := 2.U // Illegal instruction
-  csrs.io.trapValue := executeMemoryWriteback.instruction
+  csrs.io.trapValue := memoryAccess.instruction
 
   val immediateI = signExtend(instruction(31, 20), 12)
   val immediateS = signExtend(Cat(instruction(31, 25), instruction(11, 7)), 12)
@@ -800,6 +823,8 @@ class RvaiPipeline(
   // same edge. Other organizations calculate the address in execute.
   io.dataNextAddress := (if (mergeExecuteMemory) {
     decodeMemoryAddress
+  } else if (separateMemoryResponseStage) {
+    executeMemoryWriteback.address
   } else {
     address
   }) & "hfffffffc".U
@@ -813,12 +838,22 @@ class RvaiPipeline(
     executeMemoryWriteback.rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
       (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
+  val memoryRequestResultHazard = if (separateMemoryResponseStage) {
+    decodeValid && executeMemoryWriteback.valid &&
+      executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
+      (executeMemoryWriteback.memoryRead || executeMemoryWriteback.atomicValid) &&
+      executeMemoryWriteback.rd =/= 0.U &&
+      ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
+        (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
+  } else {
+    false.B
+  }
   val unavailableResultHazard = if (
     mergeExecuteMemory || executeFromInstructionPort || serializedInstructions
   ) {
     false.B
   } else if (separateDecodeExecute) {
-    executeResultHazard
+    executeResultHazard || memoryRequestResultHazard
   } else {
     writebackResultHazard
   }
@@ -869,14 +904,18 @@ class RvaiPipeline(
   io.instructionNextAddress := fetchPcNext
 
   private def advanceMemoryToWriteback(): Unit = {
-    memoryWriteback.valid := executeMemoryWriteback.valid
-    memoryWriteback.pc := executeMemoryWriteback.pc
-    memoryWriteback.instruction := executeMemoryWriteback.instruction
-    memoryWriteback.rd := executeMemoryWriteback.rd
+    memoryWriteback.valid := memoryAccess.valid
+    memoryWriteback.pc := memoryAccess.pc
+    memoryWriteback.instruction := memoryAccess.instruction
+    memoryWriteback.rd := memoryAccess.rd
     memoryWriteback.data := writebackData
-    memoryWriteback.registerWrite := executeMemoryWriteback.registerWrite
-    memoryWriteback.illegal := executeMemoryWriteback.illegal
+    memoryWriteback.registerWrite := memoryAccess.registerWrite
+    memoryWriteback.illegal := memoryAccess.illegal
     memoryWritebackConsumed := false.B
+  }
+
+  private def advanceMemoryRequestToResponse(): Unit = {
+    memoryResponse := executeMemoryWriteback
   }
 
   if (serializedInstructions) {
@@ -945,6 +984,9 @@ class RvaiPipeline(
     if (!mergeExecuteMemory) {
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
+    if (separateMemoryResponseStage) {
+      memoryResponse.valid := false.B
+    }
     decodeExecute.valid := false.B
     if (separateDecodeRegisterReadStage) {
       decodeRegisterRead.valid := false.B
@@ -966,12 +1008,18 @@ class RvaiPipeline(
     if (separateWritebackStage) {
       advanceMemoryToWriteback()
     }
+    if (separateMemoryResponseStage) {
+      advanceMemoryRequestToResponse()
+    }
     if (!mergeExecuteMemory) {
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
   }.otherwise {
     if (separateWritebackStage) {
       advanceMemoryToWriteback()
+    }
+    if (separateMemoryResponseStage) {
+      advanceMemoryRequestToResponse()
     }
     if (!mergeExecuteMemory) {
       executeMemoryWriteback.valid := executeValid
@@ -1055,15 +1103,15 @@ class RvaiPipeline(
     }
   }
 
-  val retiringAtomic = executeMemoryWriteback.valid && executeMemoryWriteback.atomicValid &&
-    !executeMemoryWriteback.illegal
+  val retiringAtomic = memoryAccess.valid && memoryAccess.atomicValid &&
+    !memoryAccess.illegal
   when(!io.memoryStall) {
     when(illegalTrap || mretActive || io.dataWriteEnable ||
-      (retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicSc)) {
+      (retiringAtomic && memoryAccess.atomicOperation === AtomicSc)) {
       reservationValid := false.B
-    }.elsewhen(retiringAtomic && executeMemoryWriteback.atomicOperation === AtomicLr) {
+    }.elsewhen(retiringAtomic && memoryAccess.atomicOperation === AtomicLr) {
       reservationValid := true.B
-      reservationAddress := executeMemoryWriteback.address & "hfffffffc".U
+      reservationAddress := memoryAccess.address & "hfffffffc".U
     }
   }
 
@@ -1078,6 +1126,9 @@ class RvaiPipeline(
       decodeExecute.valid := false.B
       if (!mergeExecuteMemory) {
         executeMemoryWriteback.valid := false.B
+      }
+      if (separateMemoryResponseStage) {
+        memoryResponse.valid := false.B
       }
       if (separateWritebackStage) {
         memoryWriteback.valid := false.B

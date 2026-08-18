@@ -191,7 +191,12 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
       ),
       Configuration("Four stages", 59.08, () => new CachedRvaiFourStages()),
       Configuration("Five stages", 63.70, () => new CachedRvaiFiveStages()),
-      Configuration("Six stages", 57.48, () => new CachedRvaiSixStages())
+      Configuration("Six stages", 57.48, () => new CachedRvaiSixStages()),
+      Configuration(
+        "Six stages + memory split",
+        54.03,
+        () => new CachedRvaiSixStagesMemorySplit()
+      )
     )
     val configurations = sys.env.get("COREMARK_PIPELINE") match {
       case Some(selected) => allConfigurations.filter(_.name == selected)

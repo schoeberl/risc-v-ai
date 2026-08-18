@@ -347,6 +347,15 @@ class CachedRvaiSixStagesSpec
       maximumFenceIReadTransfers = 16
     )
 
+class CachedRvaiSixStagesMemorySplitSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiSixStagesMemorySplit",
+      new CachedRvaiSixStagesMemorySplit(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 1,
+      testHeldExecuteForwarding = true,
+      maximumFenceIReadTransfers = 16
+    )
+
 class CachedRvaiThreeStagesSpec
     extends CachedRvaiPipelineSpec(
       "CachedRvaiThreeStages",
