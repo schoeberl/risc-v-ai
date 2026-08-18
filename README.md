@@ -289,30 +289,32 @@ so an unattainable 100 MHz target does not distort area with repair buffers.
 
 | Metric | Four stages | Three stages | Three stages + fetch predecode |
 |---|---:|---:|---:|
-| Setup WNS | -10.300 ns | -11.984 ns | -13.075 ns |
-| Estimated Fmax | 49.26 MHz | 45.49 MHz | 43.34 MHz |
-| Setup TNS | -15,096.700 ns | -14,145.200 ns | -17,866.000 ns |
+| Setup WNS | -16.842 ns | -21.699 ns | -21.249 ns |
+| Estimated Fmax | 37.25 MHz | 31.55 MHz | 32.00 MHz |
+| Setup TNS | -43,863.400 ns | -43,675.500 ns | -47,101.100 ns |
 | Die size | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm |
-| Standard-cell area | 397,705 µm² | 391,085 µm² | 391,702 µm² |
+| Standard-cell area | 395,897 µm² | 392,050 µm² | 392,235 µm² |
 | Two SRAM macro area | 237,978 µm² | 237,978 µm² | 237,978 µm² |
-| Combined area | 635,683 µm² | 629,063 µm² | 629,680 µm² |
-| Standard-cell instances | 51,792 | 51,402 | 51,459 |
-| Total placed instances | 53,128 | 52,738 | 52,795 |
-| Sequential cells | 5,509 | 5,380 | 5,384 |
-| Power | 53.072 mW | 52.231 mW | 52.089 mW |
+| Combined area | 633,875 µm² | 630,028 µm² | 630,213 µm² |
+| Standard-cell instances | 51,556 | 51,441 | 51,373 |
+| Total placed instances | 52,892 | 52,777 | 52,709 |
+| Sequential cells | 5,507 | 5,378 | 5,382 |
+| Power | 53.030 mW | 52.508 mW | 51.956 mW |
 
 The CF SRAM model uses rising-edge address and data timing, so all three Fmax
-values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. The four-stage
-organization is fastest. Moving decode into execute reduces Fmax by 7.7% while
-reducing combined area by 1.0% and power by 1.6%. Moving limited predecode work
-back into fetch reduces Fmax by a further 4.7% with essentially unchanged area
-and power. Power is estimated at the requested 100 MHz activity point even
-though none of the designs closes timing at 100 MHz.
-
-These physical results predate the unified execute-to-memory data-cache lookup
-described above. They remain the most recent like-for-like CF-SRAM pipeline
-comparison, but synthesis must be rerun before attributing an Fmax or PPA change
-to the unified cache controller.
+values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. These runs use
+the unified execute-to-memory data-cache lookup and the tags remain synchronous
+register-inferred memories. The four-stage organization is fastest. Relative to
+the preceding registered-hit results, Fmax falls from 49.26 to 37.25 MHz for four
+stages, from 45.49 to 31.55 MHz for three stages, and from 43.34 to 32.00 MHz for
+the fetch-predecode variant, while combined area and power remain within 0.6%.
+The new worst paths start in the data-tag memory's registered address decoder,
+pass through tag selection and the combinational hit/`cpuReady` decision, and
+continue through high-fanout global pipeline control. Thus the shared cache fixes
+the behavioral mismatch but exposes the tag-to-stall path that the former
+pipeline-specific registered hit decision cut. Power is estimated at the
+requested 100 MHz activity point even though none of the designs closes timing
+at 100 MHz.
 
 ### CoreMark simulation comparison
 
@@ -339,19 +341,16 @@ instructions come from the core's `cycle` and `instret` CSRs around the timed
 region. The transfer columns count accesses on the shared external port and
 split reads by the cache selected by the arbiter.
 Projected iterations/s combines cycles per iteration with each pipeline's
-cache-inclusive Sky130 Fmax from the PPA table above. CoreMark exposed the
-store-cache correctness issue fixed in this change, so these projections use
-the immediately preceding PPA measurements; rerun synthesis before treating
-them as updated physical-design results.
+cache-inclusive Sky130 Fmax from the unified-cache PPA table above.
 
 | Pipeline | Memory wait | Cycles/iteration | Retired instructions | CPI | Projected iterations/s | I-cache reads | D-cache reads | External writes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Four stages | 0 | 574,974 | 313,332 | 1.835 | 85.67 | 11,824 | 53,768 | 16,478 |
-| Three stages | 0 | 531,089 | 313,332 | 1.695 | 85.65 | 11,516 | 53,768 | 16,478 |
-| Three stages + fetch predecode | 0 | 531,089 | 313,332 | 1.695 | 81.61 | 11,516 | 53,768 | 16,478 |
-| Four stages | 5 | 961,423 | 313,332 | 3.068 | 51.24 | 11,824 | 53,768 | 16,478 |
-| Three stages | 5 | 916,251 | 313,332 | 2.924 | 49.65 | 11,516 | 53,768 | 16,478 |
-| Three stages + fetch predecode | 5 | 916,251 | 313,332 | 2.924 | 47.30 | 11,516 | 53,768 | 16,478 |
+| Four stages | 0 | 574,974 | 313,332 | 1.835 | 64.79 | 11,824 | 53,768 | 16,478 |
+| Three stages | 0 | 531,089 | 313,332 | 1.695 | 59.41 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 0 | 531,089 | 313,332 | 1.695 | 60.25 | 11,516 | 53,768 | 16,478 |
+| Four stages | 5 | 961,423 | 313,332 | 3.068 | 38.74 | 11,824 | 53,768 | 16,478 |
+| Three stages | 5 | 916,251 | 313,332 | 2.924 | 34.43 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 5 | 916,251 | 313,332 | 2.924 | 34.92 | 11,516 | 53,768 | 16,478 |
 
 The identical 53,768 data reads and 16,478 writes demonstrate that all three
 pipeline organizations now use equivalent data-cache behavior. The four-stage
