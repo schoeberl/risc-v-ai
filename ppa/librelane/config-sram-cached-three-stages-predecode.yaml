@@ -8,8 +8,8 @@ VERILOG_FILES:
   - dir::../../generated/PipelinedMultiplier.sv
   - dir::../../generated/RvaiThreeStagesPredecode.sv
   - dir::../../generated/Sky130CacheDataMemory.sv
+  - dir::../../generated/Sky130CacheTagMemory.sv
   - dir::../../generated/Sky130CachedRvaiThreeStagesPredecode.sv
-  - dir::../../generated/tags_64x22.sv
 
 CLOCK_PORT: clock
 CLOCK_PERIOD: 10.0
@@ -37,6 +37,12 @@ MACROS:
         orientation: N
       dataCache.data_memory.sram:
         location: [800, 100]
+        orientation: N
+      instructionCache.tags_memory.sram:
+        location: [100, 700]
+        orientation: N
+      dataCache.tags_memory.sram:
+        location: [800, 700]
         orientation: N
     gds:
       - dir::../../ip/CF_SRAM_1024x32/gds/CF_SRAM_1024x32.gds

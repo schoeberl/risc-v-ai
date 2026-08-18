@@ -166,14 +166,18 @@ There are not yet bus-error responses, uncached/MMIO regions, prefetching,
 or coherence.
 
 The default cached tops infer synchronous memories, which FPGA tools can map to
-block RAM. All three `Sky130CachedRvai*` tops instead instantiate two
-single-port, rising-edge synchronous `CF_SRAM_1024x32` macros. Reads and writes
-do not overlap architecturally: a
+block RAM. The three `Sky130CachedRvai*` comparison tops instantiate four
+single-port, rising-edge synchronous `CF_SRAM_1024x32` macros: independent data
+and tag memories for the instruction and data caches. Reads and writes do not
+overlap architecturally: a
 refill or cache-maintenance write takes port priority while its speculative read
 result is ignored. The caches remain 1 KiB and tie the macro's upper two address
 bits low; increasing both caches to the full 4 KiB capacity is a separate
 experiment. There are no OpenRAM macro instances in the current RTL or physical
-flow configurations.
+flow configurations. Independent tag macros are necessary because one
+single-port macro cannot perform the instruction and data lookups concurrently.
+The portable inferred memories remain only in the non-Sky130 simulation and FPGA
+tops; no Sky130 PPA top uses register-inferred tag storage.
 
 Install the licensed macro into ignored project-local directories with a Python
 virtual environment:
@@ -238,23 +242,23 @@ and LibreLane submodules after cloning with:
 git submodule update --init
 ```
 
-Run the 100 MHz Sky130A post-CTS comparison including both cache SRAMs with:
+Run the 100 MHz Sky130A post-CTS comparison including all four cache SRAMs with:
 
 ```sh
 make ppa-sky130-sram-cached-post-cts \
-  PPA_RUN_TAG=unified-cache-four-100mhz
+  PPA_RUN_TAG=cf-tags-four-100mhz
 python3 ppa/librelane/report_metrics.py \
-  unified-cache-four-100mhz
+  cf-tags-four-100mhz
 
 make ppa-sky130-sram-cached-three-stages-post-cts \
-  PPA_RUN_TAG=unified-cache-three-100mhz
+  PPA_RUN_TAG=cf-tags-three-100mhz
 python3 ppa/librelane/report_metrics.py \
-  unified-cache-three-100mhz
+  cf-tags-three-100mhz
 
 make ppa-sky130-sram-cached-three-stages-predecode-post-cts \
-  PPA_RUN_TAG=unified-cache-three-predecode-100mhz
+  PPA_RUN_TAG=cf-tags-three-predecode-100mhz
 python3 ppa/librelane/report_metrics.py \
-  unified-cache-three-predecode-100mhz
+  cf-tags-three-predecode-100mhz
 ```
 
 The post-CTS targets stop at `OpenROAD.STAMidPNR-1`, exactly the checkpoint read
@@ -294,40 +298,42 @@ the two macros are substantially smaller even though each physical macro has
 ### Cache-inclusive pipeline comparison
 
 This table compares only pipeline organization: every entry includes the same
-two 1 KiB CF-SRAM-backed caches, cache control, and shared arbiter. All entries
-use LibreLane Classic, Sky130A `sky130_fd_sc_hd`, identical 1600 µm by 1200 µm
-floorplans, a 10 ns clock target, and the nominal-corner post-CTS state. The
-flows skip post-global-placement design repair and post-CTS resizer optimization
-so an unattainable 100 MHz target does not distort area with repair buffers.
+two 1 KiB caches, four CF SRAM data/tag macros, cache control, and shared
+arbiter. All entries use LibreLane Classic, Sky130A `sky130_fd_sc_hd`, identical
+1600 µm by 1200 µm floorplans, a 10 ns clock target, and the nominal-corner
+post-CTS state. The flows skip post-global-placement design repair and post-CTS
+resizer optimization so an unattainable 100 MHz target does not distort area
+with repair buffers.
 
 | Metric | Four stages | Three stages | Three stages + fetch predecode |
 |---|---:|---:|---:|
-| Setup WNS | -16.842 ns | -21.699 ns | -21.249 ns |
-| Estimated Fmax | 37.25 MHz | 31.55 MHz | 32.00 MHz |
-| Setup TNS | -43,863.400 ns | -43,675.500 ns | -47,101.100 ns |
+| Setup WNS | -6.926 ns | -11.467 ns | -11.678 ns |
+| Estimated Fmax | 59.08 MHz | 46.58 MHz | 46.13 MHz |
+| Setup TNS | -2,402.380 ns | -5,575.510 ns | -6,292.590 ns |
 | Die size | 1600 x 1200 µm | 1600 x 1200 µm | 1600 x 1200 µm |
-| Standard-cell area | 395,897 µm² | 392,050 µm² | 392,235 µm² |
-| Two SRAM macro area | 237,978 µm² | 237,978 µm² | 237,978 µm² |
-| Combined area | 633,875 µm² | 630,028 µm² | 630,213 µm² |
-| Standard-cell instances | 51,556 | 51,441 | 51,373 |
-| Total placed instances | 52,892 | 52,777 | 52,709 |
-| Sequential cells | 5,507 | 5,378 | 5,382 |
-| Power | 53.030 mW | 52.508 mW | 51.956 mW |
+| Standard-cell area | 263,976 µm² | 259,275 µm² | 260,127 µm² |
+| Four SRAM macro area | 475,955 µm² | 475,955 µm² | 475,955 µm² |
+| Combined area | 739,931 µm² | 735,230 µm² | 736,082 µm² |
+| Standard-cell instances | 39,144 | 38,967 | 39,011 |
+| Total placed instances | 40,966 | 40,789 | 40,833 |
+| Sequential cells | 2,679 | 2,550 | 2,554 |
+| Power | 50.272 mW | 49.201 mW | 49.174 mW |
 
 The CF SRAM model uses rising-edge address and data timing, so all three Fmax
 values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. These runs use
-the unified execute-to-memory data-cache lookup and the tags remain synchronous
-register-inferred memories. The four-stage organization is fastest. Relative to
-the preceding registered-hit results, Fmax falls from 49.26 to 37.25 MHz for four
-stages, from 45.49 to 31.55 MHz for three stages, and from 43.34 to 32.00 MHz for
-the fetch-predecode variant, while combined area and power remain within 0.6%.
-The new worst paths start in the data-tag memory's registered address decoder,
-pass through tag selection and the combinational hit/`cpuReady` decision, and
-continue through high-fanout global pipeline control. Thus the shared cache fixes
-the behavioral mismatch but exposes the tag-to-stall path that the former
-pipeline-specific registered hit decision cut. Power is estimated at the
-requested 100 MHz activity point even though none of the designs closes timing
-at 100 MHz.
+the unified execute-to-memory data-cache lookup, with synchronous CF SRAM tag
+reads in all three organizations. The four-stage organization remains fastest.
+Moving the tags into hard macros removes the register-memory decoder and tag
+selection from the critical hit path. The four-stage worst path is now wholly
+inside core decode/control. The plain three-stage worst path ends in the
+multiplier, while the fetch-predecode worst path ends at the instruction-data
+SRAM input; none of the three worst setup paths ends in a tag memory.
+
+The timing improvement costs macro area. Each tag array needs only 64 by 22 bits
+but occupies a 1024-by-32 macro, using about 4.3% of its bit capacity. A
+right-sized tag SRAM would preserve most of the timing benefit with much less
+area. Power is estimated at the requested 100 MHz activity point even though
+none of the designs closes timing at 100 MHz.
 
 ### CoreMark simulation comparison
 
@@ -358,12 +364,12 @@ cache-inclusive Sky130 Fmax from the unified-cache PPA table above.
 
 | Pipeline | Memory wait | Cycles/iteration | Retired instructions | CPI | Projected iterations/s | I-cache reads | D-cache reads | External writes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Four stages | 0 | 574,974 | 313,332 | 1.835 | 64.79 | 11,824 | 53,768 | 16,478 |
-| Three stages | 0 | 531,089 | 313,332 | 1.695 | 59.41 | 11,516 | 53,768 | 16,478 |
-| Three stages + fetch predecode | 0 | 531,089 | 313,332 | 1.695 | 60.25 | 11,516 | 53,768 | 16,478 |
-| Four stages | 5 | 961,423 | 313,332 | 3.068 | 38.74 | 11,824 | 53,768 | 16,478 |
-| Three stages | 5 | 916,251 | 313,332 | 2.924 | 34.43 | 11,516 | 53,768 | 16,478 |
-| Three stages + fetch predecode | 5 | 916,251 | 313,332 | 2.924 | 34.92 | 11,516 | 53,768 | 16,478 |
+| Four stages | 0 | 574,974 | 313,332 | 1.835 | 102.75 | 11,824 | 53,768 | 16,478 |
+| Three stages | 0 | 531,089 | 313,332 | 1.695 | 87.71 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 0 | 531,089 | 313,332 | 1.695 | 86.86 | 11,516 | 53,768 | 16,478 |
+| Four stages | 5 | 961,423 | 313,332 | 3.068 | 61.45 | 11,824 | 53,768 | 16,478 |
+| Three stages | 5 | 916,251 | 313,332 | 2.924 | 50.84 | 11,516 | 53,768 | 16,478 |
+| Three stages + fetch predecode | 5 | 916,251 | 313,332 | 2.924 | 50.35 | 11,516 | 53,768 | 16,478 |
 
 The identical 53,768 data reads and 16,478 writes demonstrate that all three
 pipeline organizations now use equivalent data-cache behavior. The four-stage

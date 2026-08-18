@@ -140,7 +140,7 @@ class CachedRvaiThreeStagesPredecode(
       predecodeInFetch = true
     )
 
-/** Sky130 implementation with one CF_SRAM_1024x32 macro per cache. */
+/** Sky130 implementation with CF SRAM data and tag macros for both caches. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
       resetVector = resetVector,
@@ -149,7 +149,7 @@ class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
       useAsicSram = true
     )
 
-/** Three-stage Sky130 implementation with one CF_SRAM_1024x32 per cache. */
+/** Three-stage Sky130 implementation with CF SRAM data and tag macros. */
 class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
     extends CachedRvaiThreeStages(
       resetVector = resetVector,
@@ -158,7 +158,7 @@ class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
       useAsicSram = true
     )
 
-/** Three-stage predecode implementation using CF_SRAM_1024x32 macros. */
+/** Three-stage predecode implementation using CF SRAM data and tag macros. */
 class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesPredecode(
       resetVector = resetVector,

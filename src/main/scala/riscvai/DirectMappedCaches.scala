@@ -45,7 +45,7 @@ private[riscvai] class InstructionCache(
   }
   private val state = RegInit(State.prime)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
+  private val tags = CacheTagMemory(lineCount, tagBits, useAsicSram)
   private val data = CacheDataMemory(wordCount, useAsicSram)
   private val requestIndex = Reg(UInt(indexBits.W))
   private val requestTag = Reg(UInt(tagBits.W))
@@ -58,7 +58,13 @@ private[riscvai] class InstructionCache(
   val nextIndex = io.cpuNextAddress(offsetBits + indexBits - 1, offsetBits)
   val nextTag = io.cpuNextAddress(31, offsetBits + indexBits)
   val nextWordAddress = io.cpuNextAddress(offsetBits + indexBits - 1, 2)
-  val lookupTag = tags.read(nextIndex, io.cpuRequest)
+  tags.readEnable := io.cpuRequest
+  tags.readAddress := nextIndex
+  tags.writeEnable := state === State.refill && io.memory.ready &&
+    refillWord === (wordsPerLine - 1).U
+  tags.writeAddress := missIndex
+  tags.writeData := missTag
+  val lookupTag = tags.readData
   val hit = valid(requestIndex) && lookupTag === requestTag
 
   // The SRAM address register and the core fetch-PC register capture the same
@@ -115,7 +121,6 @@ private[riscvai] class InstructionCache(
       is(State.refill) {
         when(io.memory.ready) {
           when(refillWord === (wordsPerLine - 1).U) {
-            tags.write(missIndex, missTag)
             valid(missIndex) := true.B
             // Prime a fresh synchronous read after the refill write. This avoids
             // relying on inferred-memory read-during-write behavior.
@@ -169,7 +174,7 @@ private[riscvai] class DataCache(
   }
   private val state = RegInit(State.idle)
   private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = SyncReadMem(lineCount, UInt(tagBits.W))
+  private val tags = CacheTagMemory(lineCount, tagBits, useAsicSram)
   private val data = CacheDataMemory(wordCount, useAsicSram)
 
   private val missBase = Reg(UInt(32.W))
@@ -192,7 +197,13 @@ private[riscvai] class DataCache(
   val lookupAddress = Mux(state === State.prime, io.cpuAddress, io.cpuNextAddress)
   val lookupIndex = lookupAddress(offsetBits + indexBits - 1, offsetBits)
   val lookupWordAddress = lookupAddress(offsetBits + indexBits - 1, 2)
-  val lookupTag = tags.read(lookupIndex, lookupEnable)
+  tags.readEnable := lookupEnable
+  tags.readAddress := lookupIndex
+  tags.writeEnable := state === State.refill && io.memory.ready &&
+    refillWord === (wordsPerLine - 1).U
+  tags.writeAddress := missIndex
+  tags.writeData := missTag
+  val lookupTag = tags.readData
   val hit = valid(cpuIndex) && lookupTag === cpuTag
   val hitData = data.readData
 
@@ -262,7 +273,6 @@ private[riscvai] class DataCache(
     is(State.refill) {
       when(io.memory.ready) {
         when(refillWord === (wordsPerLine - 1).U) {
-          tags.write(missIndex, missTag)
           valid(missIndex) := true.B
           // Avoid inferred-memory read-during-write behavior. The following
           // prime cycle reissues the held request to both synchronous memories.
