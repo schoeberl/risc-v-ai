@@ -1,0 +1,64 @@
+DESIGN_NAME: Sky130CachedRvaiSixStages
+VERILOG_FILES:
+  - dir::../../generated/CacheArbiter.sv
+  - dir::../../generated/DataCache.sv
+  - dir::../../generated/InstructionCache.sv
+  - dir::../../generated/IterativeDivider.sv
+  - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
+  - dir::../../generated/RvaiSixStages.sv
+  - dir::../../generated/Sky130CacheDataMemory.sv
+  - dir::../../generated/Sky130CacheTagMemory.sv
+  - dir::../../generated/Sky130CachedRvaiSixStages.sv
+
+CLOCK_PORT: clock
+CLOCK_PERIOD: 10.0
+RUN_POST_GPL_DESIGN_REPAIR: false
+RUN_POST_CTS_RESIZER_TIMING: false
+SYNTH_HIERARCHY_MODE: deferred_flatten
+
+VDD_NETS: [vccd1]
+GND_NETS: [vssd1]
+PDN_CORE_RING: true
+PDN_MACRO_CONNECTIONS:
+  - ".*instructionCache.*sram vccd1 vssd1 (vpwrm|vpwra|vpwrp|vpb) (vgnd|vnb)"
+  - ".*dataCache.*sram vccd1 vssd1 (vpwrm|vpwra|vpwrp|vpb) (vgnd|vnb)"
+
+FP_SIZING: absolute
+DIE_AREA: [0, 0, 1600, 1200]
+CORE_AREA: [20, 20, 1580, 1180]
+FP_CORE_UTIL: 40
+
+MACROS:
+  CF_SRAM_1024x32:
+    instances:
+      instructionCache.data_memory.sram:
+        location: [100, 100]
+        orientation: N
+      dataCache.data_memory.sram:
+        location: [800, 100]
+        orientation: N
+      instructionCache.tags_memory.sram:
+        location: [100, 700]
+        orientation: N
+      dataCache.tags_memory.sram:
+        location: [800, 700]
+        orientation: N
+    gds:
+      - dir::../../ip/CF_SRAM_1024x32/gds/CF_SRAM_1024x32.gds
+    lef:
+      - dir::../../ip/CF_SRAM_1024x32/lef/CF_SRAM_1024x32.lef
+    nl:
+      - dir::../../ip/CF_SRAM_1024x32/hdl/CF_SRAM_1024x32.v
+    lib:
+      "*_tt_025C_1v80":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_tt_180V_25C.lib
+      "*_ss_100C_1v60":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_ss_160V_100C.lib
+      "*_ff_n40C_1v95":
+        - dir::../../ip/CF_SRAM_1024x32/lib/CF_SRAM_1024x32_ff_195V_n40C.lib
+
+pdk::sky130A:
+  STD_CELL_LIBRARY: sky130_fd_sc_hd
+
+RUN_KLAYOUT_XOR: false

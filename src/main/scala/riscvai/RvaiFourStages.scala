@@ -13,6 +13,14 @@ private class FetchDecodeExecute extends Bundle {
   val multiply = Bool()
 }
 
+private class DecodeRegisterRead extends Bundle {
+  val valid = Bool()
+  val pc = UInt(32.W)
+  val instruction = UInt(32.W)
+  val usesRs1 = Bool()
+  val usesRs2 = Bool()
+}
+
 private class DecodeExecute extends Bundle {
   val valid = Bool()
   val pc = UInt(32.W)
@@ -64,7 +72,8 @@ class RvaiPipeline(
     executeFromInstructionPort: Boolean = false,
     serializedInstructions: Boolean = false,
     separateWritebackStage: Boolean = false,
-    forwardInExecute: Boolean = false
+    forwardInExecute: Boolean = false,
+    separateDecodeRegisterReadStage: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
@@ -94,6 +103,11 @@ class RvaiPipeline(
     "a separate writeback stage extends the conventional four-stage organization"
   )
   require(!forwardInExecute || separateWritebackStage)
+  require(
+    !separateDecodeRegisterReadStage ||
+      (separateDecodeExecute && separateWritebackStage && forwardInExecute),
+    "a separate register-read stage extends the conventional five-stage organization"
+  )
 
   val io = IO(new Bundle {
     val instructionAddress = Output(UInt(32.W))
@@ -164,6 +178,7 @@ class RvaiPipeline(
 
   val fetchPc = RegInit(resetVector.U(32.W))
   private val fetchDecodeExecute = Reg(new FetchDecodeExecute)
+  private val decodeRegisterRead = Reg(new DecodeRegisterRead)
   private val decodeExecute = Reg(new DecodeExecute)
   private val executeMemoryWriteback = if (mergeExecuteMemory) {
     Wire(new ExecuteMemoryWriteback)
@@ -704,20 +719,36 @@ class RvaiPipeline(
     executeMemoryWriteback.redirectTarget := redirectTarget
   }
 
-  val decodeInstruction = fetchDecodeExecute.instruction
-  val decodeValid = fetchDecodeExecute.valid &&
+  val decodeInstruction = if (separateDecodeRegisterReadStage) {
+    decodeRegisterRead.instruction
+  } else {
+    fetchDecodeExecute.instruction
+  }
+  val decodeValid = (if (separateDecodeRegisterReadStage) {
+    decodeRegisterRead.valid
+  } else {
+    fetchDecodeExecute.valid
+  }) &&
     (!serializedInstructions.B || serializedState === SerializedState.decode)
-  val decodePc = fetchDecodeExecute.pc
+  val decodePc = if (separateDecodeRegisterReadStage) {
+    decodeRegisterRead.pc
+  } else {
+    fetchDecodeExecute.pc
+  }
   val decodeOpcode = decodeInstruction(6, 0)
   val decodeRs1 = decodeInstruction(19, 15)
   val decodeRs2 = decodeInstruction(24, 20)
   val decodeFunct3 = decodeInstruction(14, 12)
-  val decodeUsesRs1 = if (predecodeInFetch) {
+  val decodeUsesRs1 = if (separateDecodeRegisterReadStage) {
+    decodeRegisterRead.usesRs1
+  } else if (predecodeInFetch) {
     fetchDecodeExecute.usesRs1
   } else {
     instructionUsesRs1Opcode(decodeOpcode, decodeFunct3)
   }
-  val decodeUsesRs2 = if (predecodeInFetch) {
+  val decodeUsesRs2 = if (separateDecodeRegisterReadStage) {
+    decodeRegisterRead.usesRs2
+  } else if (predecodeInFetch) {
     fetchDecodeExecute.usesRs2
   } else {
     instructionUsesRs2Opcode(decodeOpcode)
@@ -915,6 +946,9 @@ class RvaiPipeline(
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
     decodeExecute.valid := false.B
+    if (separateDecodeRegisterReadStage) {
+      decodeRegisterRead.valid := false.B
+    }
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
   }.elsewhen(io.memoryStall) {
@@ -962,6 +996,9 @@ class RvaiPipeline(
       if (separateDecodeExecute) {
         decodeExecute.valid := false.B
       }
+      if (separateDecodeRegisterReadStage) {
+        decodeRegisterRead.valid := false.B
+      }
       fetchDecodeExecute.valid := false.B
       fetchPc := redirectTarget
     }.elsewhen(unavailableResultHazard) {
@@ -979,6 +1016,17 @@ class RvaiPipeline(
         decodeExecute.rs1Value := decodeRs1Value
         decodeExecute.rs2Value := decodeRs2Value
         decodeExecute.memoryAddress := decodeMemoryAddress
+      }
+      if (separateDecodeRegisterReadStage) {
+        decodeRegisterRead.valid := fetchDecodeExecute.valid
+        decodeRegisterRead.pc := fetchDecodeExecute.pc
+        decodeRegisterRead.instruction := fetchDecodeExecute.instruction
+        val registerReadOpcode = fetchDecodeExecute.instruction(6, 0)
+        decodeRegisterRead.usesRs1 := instructionUsesRs1Opcode(
+          registerReadOpcode,
+          fetchDecodeExecute.instruction(14, 12)
+        )
+        decodeRegisterRead.usesRs2 := instructionUsesRs2Opcode(registerReadOpcode)
       }
       if (executeFromInstructionPort) {
         when(io.instructionValid) {
@@ -1024,6 +1072,9 @@ class RvaiPipeline(
   if (!serializedInstructions) {
     when(reset.asBool) {
       fetchDecodeExecute.valid := false.B
+      if (separateDecodeRegisterReadStage) {
+        decodeRegisterRead.valid := false.B
+      }
       decodeExecute.valid := false.B
       if (!mergeExecuteMemory) {
         executeMemoryWriteback.valid := false.B

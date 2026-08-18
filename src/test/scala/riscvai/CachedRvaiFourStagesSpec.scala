@@ -10,7 +10,8 @@ abstract class CachedRvaiPipelineSpec(
     generate: => CachedRvaiPipeline,
     minimumRetirementsDuringMiss: Int,
     cycleScale: Int = 1,
-    testHeldExecuteForwarding: Boolean = false
+    testHeldExecuteForwarding: Boolean = false,
+    maximumFenceIReadTransfers: Int = 12
 ) extends AnyFreeSpec with Matchers with ChiselSim {
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
@@ -262,7 +263,7 @@ abstract class CachedRvaiPipelineSpec(
 
         expectRegister(dut, 1, 7)
         result.readTransfers must be >= 8
-        result.readTransfers must be <= 12
+        result.readTransfers must be <= maximumFenceIReadTransfers
       }
     }
 
@@ -335,6 +336,15 @@ class CachedRvaiFiveStagesSpec
       new CachedRvaiFiveStages(cacheBytes = 256, lineBytes = 16),
       minimumRetirementsDuringMiss = 1,
       testHeldExecuteForwarding = true
+    )
+
+class CachedRvaiSixStagesSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiSixStages",
+      new CachedRvaiSixStages(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 1,
+      testHeldExecuteForwarding = true,
+      maximumFenceIReadTransfers = 16
     )
 
 class CachedRvaiThreeStagesSpec
