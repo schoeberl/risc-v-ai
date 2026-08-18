@@ -5,7 +5,11 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.must.Matchers
 
-abstract class RvaiPipelineSpec(coreName: String, generate: => RvaiPipeline)
+abstract class RvaiPipelineSpec(
+    coreName: String,
+    generate: => RvaiPipeline,
+    expectedLoadUseStalls: Int = 1
+)
     extends AnyFreeSpec with Matchers with ChiselSim {
   private val Nop = BigInt("00000013", 16)
 
@@ -120,7 +124,7 @@ abstract class RvaiPipelineSpec(coreName: String, generate: => RvaiPipeline)
       }
     }
 
-    "stalls once for a load-use dependency" in {
+    s"uses $expectedLoadUseStalls stall cycles for a load-use dependency" in {
       simulate(generate) { dut =>
         initialize(dut)
         val program = Map[BigInt, BigInt](
@@ -133,7 +137,7 @@ abstract class RvaiPipelineSpec(coreName: String, generate: => RvaiPipeline)
 
         val stalls = (0 until 10).count(_ => runCycle(dut, program, memory))
 
-        stalls mustBe 1
+        stalls mustBe expectedLoadUseStalls
         memory(16) mustBe 42
         expectRegister(dut, 2, 42)
         expectRegister(dut, 3, 84)
@@ -420,3 +424,10 @@ class RvaiThreeStagesSpec extends RvaiPipelineSpec("RvaiThreeStages", new RvaiTh
 
 class RvaiThreeStagesPredecodeSpec
     extends RvaiPipelineSpec("RvaiThreeStagesPredecode", new RvaiThreeStagesPredecode)
+
+class RvaiThreeStagesExecuteMemorySpec
+    extends RvaiPipelineSpec(
+      "RvaiThreeStagesExecuteMemory",
+      new RvaiThreeStagesExecuteMemory,
+      expectedLoadUseStalls = 0
+    )

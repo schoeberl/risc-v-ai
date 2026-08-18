@@ -41,6 +41,19 @@ object ElaborateThreeStagesPredecode extends App {
   )
 }
 
+/** Emits the three-stage processor with merged execute and memory. */
+object ElaborateThreeStagesExecuteMemory extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new RvaiThreeStagesExecuteMemory,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
 /** Emits the cached processor and its shared 32-bit memory interface. */
 object ElaborateCached extends App {
   ChiselStage.emitSystemVerilogFile(
@@ -84,6 +97,19 @@ object ElaborateSky130CachedThreeStages extends App {
 object ElaborateSky130CachedThreeStagesPredecode extends App {
   ChiselStage.emitSystemVerilogFile(
     new Sky130CachedRvaiThreeStagesPredecode,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
+/** Emits the merged execute/memory comparison with Sky130 SRAM macros. */
+object ElaborateSky130CachedThreeStagesExecuteMemory extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new Sky130CachedRvaiThreeStagesExecuteMemory,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",

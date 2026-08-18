@@ -1,10 +1,14 @@
-.PHONY: coremark coremark-build rtl rtl-three-stages rtl-three-stages-predecode rtl-cached rtl-sky130-cached \
-	rtl-sky130-cached-three-stages rtl-sky130-cached-three-stages-predecode ppa-sky130 \
+.PHONY: coremark coremark-build rtl rtl-three-stages rtl-three-stages-predecode \
+	rtl-three-stages-execute-memory rtl-cached rtl-sky130-cached \
+	rtl-sky130-cached-three-stages rtl-sky130-cached-three-stages-predecode \
+	rtl-sky130-cached-three-stages-execute-memory ppa-sky130 \
 	ppa-sky130-three-stages ppa-sky130-cached \
 	ppa-sky130-three-stages-predecode ppa-sky130-sram-cached \
 	ppa-sky130-sram-cached-three-stages ppa-sky130-sram-cached-three-stages-predecode \
+	ppa-sky130-sram-cached-three-stages-execute-memory \
 	ppa-sky130-sram-cached-post-cts ppa-sky130-sram-cached-three-stages-post-cts \
-	ppa-sky130-sram-cached-three-stages-predecode-post-cts
+	ppa-sky130-sram-cached-three-stages-predecode-post-cts \
+	ppa-sky130-sram-cached-three-stages-execute-memory-post-cts
 
 RTL_DIR := generated
 LIBRELANE_ROOT ?= $(CURDIR)/external/librelane
@@ -28,6 +32,9 @@ rtl-three-stages:
 rtl-three-stages-predecode:
 	sbt "runMain riscvai.ElaborateThreeStagesPredecode --target-dir $(RTL_DIR)"
 
+rtl-three-stages-execute-memory:
+	sbt "runMain riscvai.ElaborateThreeStagesExecuteMemory --target-dir $(RTL_DIR)"
+
 rtl-cached:
 	sbt "runMain riscvai.ElaborateCached --target-dir $(RTL_DIR)"
 
@@ -39,6 +46,9 @@ rtl-sky130-cached-three-stages:
 
 rtl-sky130-cached-three-stages-predecode:
 	sbt "runMain riscvai.ElaborateSky130CachedThreeStagesPredecode --target-dir $(RTL_DIR)"
+
+rtl-sky130-cached-three-stages-execute-memory:
+	sbt "runMain riscvai.ElaborateSky130CachedThreeStagesExecuteMemory --target-dir $(RTL_DIR)"
 
 ppa-sky130: rtl
 	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
@@ -68,6 +78,10 @@ ppa-sky130-sram-cached-three-stages-predecode: rtl-sky130-cached-three-stages-pr
 	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
 	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) ppa/librelane/config-sram-cached-three-stages-predecode.yaml'
 
+ppa-sky130-sram-cached-three-stages-execute-memory: rtl-sky130-cached-three-stages-execute-memory
+	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
+	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) ppa/librelane/config-sram-cached-three-stages-execute-memory.yaml'
+
 ppa-sky130-sram-cached-post-cts: rtl-sky130-cached
 	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
 	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached.yaml'
@@ -79,3 +93,7 @@ ppa-sky130-sram-cached-three-stages-post-cts: rtl-sky130-cached-three-stages
 ppa-sky130-sram-cached-three-stages-predecode-post-cts: rtl-sky130-cached-three-stages-predecode
 	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
 	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached-three-stages-predecode.yaml'
+
+ppa-sky130-sram-cached-three-stages-execute-memory-post-cts: rtl-sky130-cached-three-stages-execute-memory
+	nix-shell $(LIBRELANE_ROOT)/shell.nix --run \
+	  'librelane --pdk-root $(SKY130_PDK_ROOT) --run-tag $(PPA_RUN_TAG) $(POST_CTS_ARGS) ppa/librelane/config-sram-cached-three-stages-execute-memory.yaml'

@@ -24,3 +24,18 @@ class RvaiThreeStagesPredecode(resetVector: BigInt = 0)
       separateDecodeExecute = false,
       predecodeInFetch = true
     )
+
+/** A three-stage processor with fetch, decode/register-read/address, and
+  * combined execute/memory/writeback stages.
+  *
+  * Stage 2 calculates the effective memory address early enough to start the
+  * synchronous cache lookup. Stage 3 consumes load data directly, resolves
+  * control transfers, and forwards load data into stage 2, eliminating the
+  * ordinary load-use bubble.
+  */
+class RvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
+    extends RvaiPipeline(
+      resetVector,
+      separateDecodeExecute = true,
+      mergeExecuteMemory = true
+    )

@@ -11,9 +11,11 @@ class CachedRvaiPipeline(
     lineBytes: Int = 16,
     useAsicSram: Boolean = false,
     threeStages: Boolean = false,
-    predecodeInFetch: Boolean = false
+    predecodeInFetch: Boolean = false,
+    executeMemoryInThirdStage: Boolean = false
 ) extends Module {
   require(!predecodeInFetch || threeStages)
+  require(!executeMemoryInThirdStage || threeStages)
 
   val io = IO(new Bundle {
     val memoryRequest = Output(Bool())
@@ -34,7 +36,9 @@ class CachedRvaiPipeline(
     val debugRegisterData = Output(UInt(32.W))
   })
 
-  private val core = if (predecodeInFetch) {
+  private val core = if (executeMemoryInThirdStage) {
+    Module(new RvaiThreeStagesExecuteMemory(resetVector))
+  } else if (predecodeInFetch) {
     Module(new RvaiThreeStagesPredecode(resetVector))
   } else if (threeStages) {
     Module(new RvaiThreeStages(resetVector))
@@ -140,6 +144,21 @@ class CachedRvaiThreeStagesPredecode(
       predecodeInFetch = true
     )
 
+/** Three-stage execute/memory variant with private caches and one shared bus. */
+class CachedRvaiThreeStagesExecuteMemory(
+    resetVector: BigInt = 0,
+    cacheBytes: Int = 1024,
+    lineBytes: Int = 16,
+    useAsicSram: Boolean = false
+) extends CachedRvaiPipeline(
+      resetVector,
+      cacheBytes,
+      lineBytes,
+      useAsicSram,
+      threeStages = true,
+      executeMemoryInThirdStage = true
+    )
+
 /** Sky130 implementation with CF SRAM data and tag macros for both caches. */
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
@@ -161,6 +180,15 @@ class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
 /** Three-stage predecode implementation using CF SRAM data and tag macros. */
 class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesPredecode(
+      resetVector = resetVector,
+      cacheBytes = 1024,
+      lineBytes = 16,
+      useAsicSram = true
+    )
+
+/** Merged execute/memory three-stage implementation using CF SRAM macros. */
+class Sky130CachedRvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
+    extends CachedRvaiThreeStagesExecuteMemory(
       resetVector = resetVector,
       cacheBytes = 1024,
       lineBytes = 16,

@@ -24,17 +24,15 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private val DoneMagic = BigInt("434d4f4b", 16)
   private val WordMask = BigInt("ffffffff", 16)
 
-  private case class Pending(
+  private case class Transaction(
       address: BigInt,
       write: Boolean,
       writeData: BigInt,
-      writeMask: BigInt,
-      readyCycle: Long
+      writeMask: BigInt
   )
 
   private case class Result(
       pipeline: String,
-      latency: Int,
       cycles: BigInt,
       instructions: BigInt,
       iterations: BigInt,
@@ -78,12 +76,9 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
   private def run(
       dut: CachedRvaiPipeline,
       binary: Path,
-      latency: Int,
       maximumCycles: Long = 5000000L
   ): Result = {
-    require(latency >= 0)
     val memory = loadBinary(binary)
-    var pending = Option.empty[Pending]
     var cycle = 0L
     var instructionReads = 0L
     var dataReads = 0L
@@ -98,7 +93,7 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
     dut.clock.step()
     dut.reset.poke(false.B)
 
-    def complete(transaction: Pending): Unit = {
+    def complete(transaction: Transaction): Unit = {
       dut.io.memoryReadData.poke(memory.getOrElse(transaction.address, BigInt(0)).U)
       dut.io.memoryReady.poke(true.B)
       if (transaction.write) {
@@ -121,26 +116,13 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
       dut.io.memoryReady.poke(false.B)
       dut.io.memoryReadData.poke(0.U)
 
-      pending match {
-        case Some(transaction) =>
-          dut.io.memoryRequest.expect(true.B)
-          dut.io.memoryAddress.expect(transaction.address.U)
-          dut.io.memoryWrite.expect(transaction.write.B)
-          if (cycle == transaction.readyCycle) {
-            complete(transaction)
-            pending = None
-          }
-        case None if dut.io.memoryRequest.peek().litToBoolean =>
-          val transaction = Pending(
-            dut.io.memoryAddress.peek().litValue,
-            dut.io.memoryWrite.peek().litToBoolean,
-            dut.io.memoryWriteData.peek().litValue,
-            dut.io.memoryWriteMask.peek().litValue,
-            cycle + latency
-          )
-          if (latency == 0) complete(transaction)
-          else pending = Some(transaction)
-        case None =>
+      if (dut.io.memoryRequest.peek().litToBoolean) {
+        complete(Transaction(
+          dut.io.memoryAddress.peek().litValue,
+          dut.io.memoryWrite.peek().litToBoolean,
+          dut.io.memoryWriteData.peek().litValue,
+          dut.io.memoryWriteMask.peek().litValue
+        ))
       }
 
       if (dut.io.retiredValid.peek().litToBoolean) {
@@ -172,7 +154,6 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
 
     Result(
       pipeline = "",
-      latency = latency,
       cycles = memory(ResultCycles),
       instructions = memory(ResultInstret),
       iterations = memory(ResultIterations),
@@ -191,36 +172,35 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
     Files.isRegularFile(binary) mustBe true
 
     val allConfigurations = Seq(
-      Configuration("Four stages", 49.26, () => new CachedRvaiFourStages()),
-      Configuration("Three stages", 45.49, () => new CachedRvaiThreeStages()),
+      Configuration("Three stages", 46.58, () => new CachedRvaiThreeStages()),
       Configuration(
         "Three stages + fetch predecode",
-        43.34,
+        46.13,
         () => new CachedRvaiThreeStagesPredecode()
-      )
+      ),
+      Configuration(
+        "Three stages + execute/memory",
+        52.63,
+        () => new CachedRvaiThreeStagesExecuteMemory()
+      ),
+      Configuration("Four stages", 59.08, () => new CachedRvaiFourStages())
     )
     val configurations = sys.env.get("COREMARK_PIPELINE") match {
       case Some(selected) => allConfigurations.filter(_.name == selected)
       case None => allConfigurations
     }
     configurations.nonEmpty mustBe true
-    val latencies = sys.env.get("COREMARK_LATENCY")
-      .map(value => Seq(value.toInt))
-      .getOrElse(Seq(0, 5))
-    val results = for {
-      latency <- latencies
-      configuration <- configurations
-    } yield {
+    val results = configurations.map { configuration =>
       var measured = Option.empty[Result]
       simulate(configuration.generate()) { dut =>
-        measured = Some(run(dut, binary, latency))
+        measured = Some(run(dut, binary))
       }
       measured.get.copy(pipeline = configuration.name, fmaxMHz = configuration.fmaxMHz)
     }
 
     println("\nCoreMark short RTL-simulation comparison (CRC checked, not an official score)")
-    println("| Pipeline | Memory wait | Cycles/iteration | Instructions | CPI | Projected iterations/s | I reads | D reads | Writes |")
-    println("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    println("| Pipeline | Cycles/iteration | Instructions | CPI | Projected iterations/s | I reads | D reads | Writes |")
+    println("|---|---:|---:|---:|---:|---:|---:|---:|")
     results.foreach { result =>
       val cpi = String.format(Locale.ROOT, "%.3f", Double.box(result.cpi))
       val projected = String.format(
@@ -228,8 +208,8 @@ class CoreMarkBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
         "%.2f",
         Double.box(result.projectedIterationsPerSecond)
       )
-      println(s"| ${result.pipeline} | ${result.latency} | " +
-        s"${result.cyclesPerIteration} | ${result.instructions} | $cpi | " +
+      println(s"| ${result.pipeline} | ${result.cyclesPerIteration} | " +
+        s"${result.instructions} | $cpi | " +
         s"$projected | ${result.instructionReads} | ${result.dataReads} | " +
         s"${result.writes} |")
     }

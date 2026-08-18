@@ -19,6 +19,7 @@ private class DecodeExecute extends Bundle {
   val instruction = UInt(32.W)
   val rs1Value = UInt(32.W)
   val rs2Value = UInt(32.W)
+  val memoryAddress = UInt(32.W)
 }
 
 private class ExecuteMemoryWriteback extends Bundle {
@@ -46,11 +47,20 @@ private class ExecuteMemoryWriteback extends Bundle {
 class RvaiPipeline(
     resetVector: BigInt,
     separateDecodeExecute: Boolean,
-    predecodeInFetch: Boolean = false
+    predecodeInFetch: Boolean = false,
+    mergeExecuteMemory: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
     "fetch predecode is currently supported only by a combined decode/execute stage"
+  )
+  require(
+    !mergeExecuteMemory || separateDecodeExecute,
+    "merged execute/memory requires a separate decode/address stage"
+  )
+  require(
+    !mergeExecuteMemory || !predecodeInFetch,
+    "merged execute/memory does not use fetch predecode"
   )
 
   val io = IO(new Bundle {
@@ -123,7 +133,12 @@ class RvaiPipeline(
   val fetchPc = RegInit(resetVector.U(32.W))
   private val fetchDecodeExecute = Reg(new FetchDecodeExecute)
   private val decodeExecute = Reg(new DecodeExecute)
-  private val executeMemoryWriteback = Reg(new ExecuteMemoryWriteback)
+  private val executeMemoryWriteback = if (mergeExecuteMemory) {
+    Wire(new ExecuteMemoryWriteback)
+  } else {
+    Reg(new ExecuteMemoryWriteback)
+  }
+  private val mergedExecutionComplete = WireDefault(true.B)
   val registers = Reg(Vec(32, UInt(32.W)))
   val reservationValid = RegInit(false.B)
   val reservationAddress = Reg(UInt(32.W))
@@ -131,7 +146,7 @@ class RvaiPipeline(
   private val divider = Module(new IterativeDivider)
   private val multiplier = Module(new PipelinedMultiplier)
   val illegalTrap = executeMemoryWriteback.valid && executeMemoryWriteback.illegal &&
-    !io.memoryStall
+    !io.memoryStall && mergedExecutionComplete
 
   val memoryByteShift = Cat(executeMemoryWriteback.address(1, 0), 0.U(3.W))
   val shiftedReadData = io.dataReadData >> memoryByteShift
@@ -153,7 +168,7 @@ class RvaiPipeline(
   )
   val writebackActive = executeMemoryWriteback.valid &&
     executeMemoryWriteback.registerWrite && !executeMemoryWriteback.illegal &&
-    executeMemoryWriteback.rd =/= 0.U && !io.memoryStall
+    executeMemoryWriteback.rd =/= 0.U && !io.memoryStall && mergedExecutionComplete
 
   when(writebackActive) {
     registers(executeMemoryWriteback.rd) := writebackData
@@ -222,7 +237,7 @@ class RvaiPipeline(
   io.dataWriteEnable := dataWriteActive
   io.illegalInstruction := illegalTrap
   io.retiredValid := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
-    !io.memoryStall
+    !io.memoryStall && mergedExecutionComplete
   io.retiredPc := executeMemoryWriteback.pc
   io.retiredInstruction := executeMemoryWriteback.instruction
   io.instructionCacheInvalidate := io.retiredValid &&
@@ -317,7 +332,7 @@ class RvaiPipeline(
   csrs.io.address := instruction(31, 20)
   csrs.io.writeData := csrWriteData
   csrs.io.retired := executeMemoryWriteback.valid && !executeMemoryWriteback.illegal &&
-    !io.memoryStall
+    !io.memoryStall && mergedExecutionComplete
   csrs.io.trapEnter := illegalTrap
   csrs.io.trapPc := executeMemoryWriteback.pc
   csrs.io.trapCause := 2.U // Illegal instruction
@@ -406,7 +421,7 @@ class RvaiPipeline(
     }
 
     is(OpcodeLoad) {
-      address := rs1Value + immediateI
+      address := (if (mergeExecuteMemory) decodeExecute.memoryAddress else rs1Value + immediateI)
       val validWidth = funct3 === "b000".U || funct3 === "b001".U ||
         funct3 === "b010".U || funct3 === "b100".U || funct3 === "b101".U
       val aligned = MuxLookup(funct3, true.B)(Seq(
@@ -423,7 +438,7 @@ class RvaiPipeline(
     }
 
     is(OpcodeStore) {
-      address := rs1Value + immediateS
+      address := (if (mergeExecuteMemory) decodeExecute.memoryAddress else rs1Value + immediateS)
       val validWidth = funct3 === "b000".U || funct3 === "b001".U || funct3 === "b010".U
       val aligned = MuxLookup(funct3, true.B)(Seq(
         "b001".U -> !address(0),
@@ -443,7 +458,7 @@ class RvaiPipeline(
         operation === AtomicAnd || operation === AtomicOr || operation === AtomicMin ||
         operation === AtomicMax || operation === AtomicMinU || operation === AtomicMaxU
       val validLr = operation =/= AtomicLr || rs2 === 0.U
-      address := rs1Value
+      address := (if (mergeExecuteMemory) decodeExecute.memoryAddress else rs1Value)
       when(funct3 === "b010".U && address(1, 0) === 0.U && validOperation && validLr) {
         illegal := false.B
         registerWrite := true.B
@@ -556,9 +571,24 @@ class RvaiPipeline(
     }
   }
 
-  // Let a synchronous data-cache SRAM capture the execute-stage address on the
-  // same edge that the request enters memory/writeback.
-  io.dataNextAddress := address & "hfffffffc".U
+  if (mergeExecuteMemory) {
+    // Stage 3 executes and consumes the synchronous cache result directly; no
+    // execute-to-memory register is present in this organization.
+    executeMemoryWriteback.valid := executeValid
+    executeMemoryWriteback.pc := executePc
+    executeMemoryWriteback.instruction := instruction
+    executeMemoryWriteback.rd := rd
+    executeMemoryWriteback.result := result
+    executeMemoryWriteback.address := address
+    executeMemoryWriteback.storeData := storeData
+    executeMemoryWriteback.registerWrite := registerWrite
+    executeMemoryWriteback.memoryRead := memoryRead
+    executeMemoryWriteback.memoryWrite := memoryWrite
+    executeMemoryWriteback.memoryFunction := memoryFunction
+    executeMemoryWriteback.atomicValid := atomicValid
+    executeMemoryWriteback.atomicOperation := atomicOperation
+    executeMemoryWriteback.illegal := illegal
+  }
 
   val decodeInstruction = fetchDecodeExecute.instruction
   val decodeValid = fetchDecodeExecute.valid
@@ -600,6 +630,27 @@ class RvaiPipeline(
 
   val decodeRs1Value = readDecodeRegister(decodeRs1)
   val decodeRs2Value = readDecodeRegister(decodeRs2)
+  val decodeImmediateI = signExtend(decodeInstruction(31, 20), 12)
+  val decodeImmediateS = signExtend(
+    Cat(decodeInstruction(31, 25), decodeInstruction(11, 7)),
+    12
+  )
+  val decodeAddressOffset = Mux(
+    decodeOpcode === OpcodeStore,
+    decodeImmediateS,
+    Mux(decodeOpcode === OpcodeLoad, decodeImmediateI, 0.U)
+  )
+  val decodeMemoryAddress = decodeRs1Value + decodeAddressOffset
+
+  // The merged organization performs effective-address calculation in decode
+  // so the synchronous cache lookup and the stage-3 instruction advance on the
+  // same edge. Other organizations calculate the address in execute.
+  io.dataNextAddress := (if (mergeExecuteMemory) {
+    decodeMemoryAddress
+  } else {
+    address
+  }) & "hfffffffc".U
+
   val executeResultHazard = decodeValid && executeValid && registerWrite && !illegal &&
     (memoryRead || atomicValid) && rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === rd) || (decodeUsesRs2 && decodeRs2 === rd))
@@ -609,12 +660,17 @@ class RvaiPipeline(
     executeMemoryWriteback.rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
       (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
-  val unavailableResultHazard = if (separateDecodeExecute) {
+  val unavailableResultHazard = if (mergeExecuteMemory) {
+    false.B
+  } else if (separateDecodeExecute) {
     executeResultHazard
   } else {
     writebackResultHazard
   }
   val executionStall = divideStall || multiplyStall
+  if (mergeExecuteMemory) {
+    mergedExecutionComplete := !executionStall
+  }
   val pipelineStall = io.memoryStall || executionStall || unavailableResultHazard
   io.pipelineStall := pipelineStall
 
@@ -644,7 +700,9 @@ class RvaiPipeline(
   io.instructionNextAddress := fetchPcNext
 
   when(illegalTrap) {
-    executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    if (!mergeExecuteMemory) {
+      executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    }
     decodeExecute.valid := false.B
     fetchDecodeExecute.valid := false.B
     fetchPc := csrs.io.trapVector
@@ -652,22 +710,26 @@ class RvaiPipeline(
     // Hold every stage until the cache hierarchy completes the outstanding access.
   }.elsewhen(executionStall) {
     // Let the older instruction retire while execute, decode, and fetch hold.
-    executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    if (!mergeExecuteMemory) {
+      executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
+    }
   }.otherwise {
-    executeMemoryWriteback.valid := executeValid
-    executeMemoryWriteback.pc := executePc
-    executeMemoryWriteback.instruction := instruction
-    executeMemoryWriteback.rd := rd
-    executeMemoryWriteback.result := result
-    executeMemoryWriteback.address := address
-    executeMemoryWriteback.storeData := storeData
-    executeMemoryWriteback.registerWrite := registerWrite
-    executeMemoryWriteback.memoryRead := memoryRead
-    executeMemoryWriteback.memoryWrite := memoryWrite
-    executeMemoryWriteback.memoryFunction := memoryFunction
-    executeMemoryWriteback.atomicValid := atomicValid
-    executeMemoryWriteback.atomicOperation := atomicOperation
-    executeMemoryWriteback.illegal := illegal
+    if (!mergeExecuteMemory) {
+      executeMemoryWriteback.valid := executeValid
+      executeMemoryWriteback.pc := executePc
+      executeMemoryWriteback.instruction := instruction
+      executeMemoryWriteback.rd := rd
+      executeMemoryWriteback.result := result
+      executeMemoryWriteback.address := address
+      executeMemoryWriteback.storeData := storeData
+      executeMemoryWriteback.registerWrite := registerWrite
+      executeMemoryWriteback.memoryRead := memoryRead
+      executeMemoryWriteback.memoryWrite := memoryWrite
+      executeMemoryWriteback.memoryFunction := memoryFunction
+      executeMemoryWriteback.atomicValid := atomicValid
+      executeMemoryWriteback.atomicOperation := atomicOperation
+      executeMemoryWriteback.illegal := illegal
+    }
 
     when(executeRedirect) {
       if (separateDecodeExecute) {
@@ -689,6 +751,7 @@ class RvaiPipeline(
         decodeExecute.instruction := decodeInstruction
         decodeExecute.rs1Value := decodeRs1Value
         decodeExecute.rs2Value := decodeRs2Value
+        decodeExecute.memoryAddress := decodeMemoryAddress
       }
       fetchDecodeExecute.valid := io.instructionValid
       when(io.instructionValid) {
@@ -728,7 +791,9 @@ class RvaiPipeline(
   when(reset.asBool) {
     fetchDecodeExecute.valid := false.B
     decodeExecute.valid := false.B
-    executeMemoryWriteback.valid := false.B
+    if (!mergeExecuteMemory) {
+      executeMemoryWriteback.valid := false.B
+    }
   }
 }
 
