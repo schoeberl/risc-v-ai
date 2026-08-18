@@ -52,3 +52,11 @@ class RvaiTwoStages(resetVector: BigInt = 0)
       separateDecodeExecute = false,
       executeFromInstructionPort = true
     )
+
+/** A serialized multicycle processor with one instruction in flight. */
+class RvaiMulticycle(resetVector: BigInt = 0)
+    extends RvaiPipeline(
+      resetVector,
+      separateDecodeExecute = true,
+      serializedInstructions = true
+    )

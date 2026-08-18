@@ -8,10 +8,12 @@ import org.scalatest.matchers.must.Matchers
 abstract class RvaiPipelineSpec(
     coreName: String,
     generate: => RvaiPipeline,
-    expectedLoadUseStalls: Int = 1
+    expectedLoadUseStalls: Int = 1,
+    cycleScale: Int = 1
 )
     extends AnyFreeSpec with Matchers with ChiselSim {
   private val Nop = BigInt("00000013", 16)
+  private def scaled(cycles: Int): Int = cycles * cycleScale
 
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
@@ -113,7 +115,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        for (_ <- 0 until 8) {
+        for (_ <- 0 until scaled(8)) {
           runCycle(dut, program, memory) mustBe false
         }
 
@@ -135,7 +137,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        val stalls = (0 until 10).count(_ => runCycle(dut, program, memory))
+        val stalls = (0 until scaled(10)).count(_ => runCycle(dut, program, memory))
 
         stalls mustBe expectedLoadUseStalls
         memory(16) mustBe 42
@@ -155,7 +157,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        for (_ <- 0 until 9) {
+        for (_ <- 0 until scaled(9)) {
           runCycle(dut, program, memory)
         }
 
@@ -178,7 +180,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        for (_ <- 0 until 13) {
+        for (_ <- 0 until scaled(13)) {
           runCycle(dut, program, memory)
         }
 
@@ -216,7 +218,7 @@ abstract class RvaiPipelineSpec(
         var dividerStalls = 0
         // Run long enough for the final overflow remainder to retire. An
         // unwritten destination register has no defined post-reset value.
-        for (_ <- 0 until 340) {
+        for (_ <- 0 until scaled(340)) {
           if (runCycle(dut, program, memory)) dividerStalls += 1
         }
 
@@ -250,7 +252,7 @@ abstract class RvaiPipelineSpec(
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
         var dividerStalls = 0
 
-        for (_ <- 0 until 90) {
+        for (_ <- 0 until scaled(90)) {
           if (runCycle(dut, program, memory)) dividerStalls += 1
         }
 
@@ -276,7 +278,7 @@ abstract class RvaiPipelineSpec(
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
         var multiplierStalls = 0
 
-        for (_ <- 0 until 30) {
+        for (_ <- 0 until scaled(30)) {
           if (runCycle(dut, program, memory)) multiplierStalls += 1
         }
 
@@ -314,7 +316,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map[BigInt, BigInt](BigInt(0) -> BigInt(10))
 
-        for (_ <- 0 until 28) {
+        for (_ <- 0 until scaled(28)) {
           runCycle(dut, program, memory)
         }
 
@@ -360,7 +362,7 @@ abstract class RvaiPipelineSpec(
         )
         val memory = collection.mutable.Map.empty[BigInt, BigInt]
 
-        for (_ <- 0 until 24) {
+        for (_ <- 0 until scaled(24)) {
           runCycle(dut, program, memory)
         }
 
@@ -398,7 +400,7 @@ abstract class RvaiPipelineSpec(
         )
         var traps = 0
 
-        for (_ <- 0 until 30) {
+        for (_ <- 0 until scaled(30)) {
           val fetchAddress = dut.io.instructionAddress.peek().litValue
           dut.io.instruction.poke(program.getOrElse(fetchAddress, Nop).U)
           dut.io.dataReadData.poke(0.U)
@@ -438,4 +440,12 @@ class RvaiTwoStagesSpec
       "RvaiTwoStages",
       new RvaiTwoStages,
       expectedLoadUseStalls = 0
+    )
+
+class RvaiMulticycleSpec
+    extends RvaiPipelineSpec(
+      "RvaiMulticycle",
+      new RvaiMulticycle,
+      expectedLoadUseStalls = 0,
+      cycleScale = 4
     )

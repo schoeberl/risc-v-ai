@@ -37,6 +37,8 @@ private class ExecuteMemoryWriteback extends Bundle {
   val atomicValid = Bool()
   val atomicOperation = UInt(5.W)
   val illegal = Bool()
+  val redirect = Bool()
+  val redirectTarget = UInt(32.W)
 }
 
 /** A configurable, single-issue RV32IMA_Zicsr_Zifencei pipeline.
@@ -49,7 +51,8 @@ class RvaiPipeline(
     separateDecodeExecute: Boolean,
     predecodeInFetch: Boolean = false,
     mergeExecuteMemory: Boolean = false,
-    executeFromInstructionPort: Boolean = false
+    executeFromInstructionPort: Boolean = false,
+    serializedInstructions: Boolean = false
 ) extends Module {
   require(
     !predecodeInFetch || !separateDecodeExecute,
@@ -67,6 +70,11 @@ class RvaiPipeline(
     !executeFromInstructionPort || (!separateDecodeExecute && !predecodeInFetch &&
       !mergeExecuteMemory),
     "direct instruction-port execution is a distinct two-stage organization"
+  )
+  require(
+    !serializedInstructions || (separateDecodeExecute && !predecodeInFetch &&
+      !mergeExecuteMemory && !executeFromInstructionPort),
+    "serialized execution uses explicit fetch, decode, execute, and memory phases"
   )
 
   val io = IO(new Bundle {
@@ -145,6 +153,10 @@ class RvaiPipeline(
     Reg(new ExecuteMemoryWriteback)
   }
   private val mergedExecutionComplete = WireDefault(true.B)
+  private object SerializedState extends ChiselEnum {
+    val fetch, decode, execute, memory = Value
+  }
+  private val serializedState = RegInit(SerializedState.fetch)
   val registers = Reg(Vec(32, UInt(32.W)))
   val reservationValid = RegInit(false.B)
   val reservationAddress = Reg(UInt(32.W))
@@ -262,13 +274,13 @@ class RvaiPipeline(
   } else {
     fetchDecodeExecute.instruction
   }
-  val executeValid = if (executeFromInstructionPort) {
+  val executeValid = (if (executeFromInstructionPort) {
     io.instructionValid
   } else if (separateDecodeExecute) {
     decodeExecute.valid
   } else {
     fetchDecodeExecute.valid
-  }
+  }) && (!serializedInstructions.B || serializedState === SerializedState.execute)
   val executePc = if (executeFromInstructionPort) {
     fetchPc
   } else if (separateDecodeExecute) {
@@ -604,10 +616,13 @@ class RvaiPipeline(
     executeMemoryWriteback.atomicValid := atomicValid
     executeMemoryWriteback.atomicOperation := atomicOperation
     executeMemoryWriteback.illegal := illegal
+    executeMemoryWriteback.redirect := redirect
+    executeMemoryWriteback.redirectTarget := redirectTarget
   }
 
   val decodeInstruction = fetchDecodeExecute.instruction
-  val decodeValid = fetchDecodeExecute.valid
+  val decodeValid = fetchDecodeExecute.valid &&
+    (!serializedInstructions.B || serializedState === SerializedState.decode)
   val decodePc = fetchDecodeExecute.pc
   val decodeOpcode = decodeInstruction(6, 0)
   val decodeRs1 = decodeInstruction(19, 15)
@@ -624,7 +639,7 @@ class RvaiPipeline(
     instructionUsesRs2Opcode(decodeOpcode)
   }
 
-  val executeForwardActive = if (separateDecodeExecute) {
+  val executeForwardActive = if (separateDecodeExecute && !serializedInstructions) {
     executeValid && registerWrite && !illegal && !memoryRead && !atomicValid && rd =/= 0.U
   } else {
     false.B
@@ -676,7 +691,9 @@ class RvaiPipeline(
     executeMemoryWriteback.rd =/= 0.U &&
     ((decodeUsesRs1 && decodeRs1 === executeMemoryWriteback.rd) ||
       (decodeUsesRs2 && decodeRs2 === executeMemoryWriteback.rd))
-  val unavailableResultHazard = if (mergeExecuteMemory || executeFromInstructionPort) {
+  val unavailableResultHazard = if (
+    mergeExecuteMemory || executeFromInstructionPort || serializedInstructions
+  ) {
     false.B
   } else if (separateDecodeExecute) {
     executeResultHazard
@@ -702,20 +719,92 @@ class RvaiPipeline(
   // that fetchPc advances. Its output then corresponds to fetchPc throughout
   // the following cycle.
   val fetchPcNext = WireDefault(fetchPc)
-  when(reset.asBool) {
-    fetchPcNext := resetVector.U(32.W)
-  }.elsewhen(illegalTrap) {
-    fetchPcNext := csrs.io.trapVector
-  }.elsewhen(!io.memoryStall && !executionStall) {
-    when(executeRedirect) {
-      fetchPcNext := redirectTarget
-    }.elsewhen(!unavailableResultHazard && io.instructionValid) {
-      fetchPcNext := fetchPc + 4.U
+  if (serializedInstructions) {
+    when(reset.asBool) {
+      fetchPcNext := resetVector.U(32.W)
+    }.elsewhen(serializedState === SerializedState.memory && !io.memoryStall) {
+      when(illegalTrap) {
+        fetchPcNext := csrs.io.trapVector
+      }.elsewhen(executeMemoryWriteback.redirect) {
+        fetchPcNext := executeMemoryWriteback.redirectTarget
+      }.otherwise {
+        fetchPcNext := fetchPc + 4.U
+      }
+    }
+  } else {
+    when(reset.asBool) {
+      fetchPcNext := resetVector.U(32.W)
+    }.elsewhen(illegalTrap) {
+      fetchPcNext := csrs.io.trapVector
+    }.elsewhen(!io.memoryStall && !executionStall) {
+      when(executeRedirect) {
+        fetchPcNext := redirectTarget
+      }.elsewhen(!unavailableResultHazard && io.instructionValid) {
+        fetchPcNext := fetchPc + 4.U
+      }
     }
   }
   io.instructionNextAddress := fetchPcNext
 
-  when(illegalTrap) {
+  if (serializedInstructions) {
+    when(reset.asBool) {
+      serializedState := SerializedState.fetch
+      fetchDecodeExecute.valid := false.B
+      decodeExecute.valid := false.B
+      executeMemoryWriteback.valid := false.B
+    }.otherwise {
+      switch(serializedState) {
+        is(SerializedState.fetch) {
+          executeMemoryWriteback.valid := false.B
+          when(io.instructionValid) {
+            fetchDecodeExecute.valid := true.B
+            fetchDecodeExecute.pc := fetchPc
+            fetchDecodeExecute.instruction := io.instruction
+            serializedState := SerializedState.decode
+          }
+        }
+        is(SerializedState.decode) {
+          decodeExecute.valid := decodeValid
+          decodeExecute.pc := decodePc
+          decodeExecute.instruction := decodeInstruction
+          decodeExecute.rs1Value := decodeRs1Value
+          decodeExecute.rs2Value := decodeRs2Value
+          decodeExecute.memoryAddress := decodeMemoryAddress
+          fetchDecodeExecute.valid := false.B
+          serializedState := SerializedState.execute
+        }
+        is(SerializedState.execute) {
+          when(!executionStall) {
+            executeMemoryWriteback.valid := executeValid
+            executeMemoryWriteback.pc := executePc
+            executeMemoryWriteback.instruction := instruction
+            executeMemoryWriteback.rd := rd
+            executeMemoryWriteback.result := result
+            executeMemoryWriteback.address := address
+            executeMemoryWriteback.storeData := storeData
+            executeMemoryWriteback.registerWrite := registerWrite
+            executeMemoryWriteback.memoryRead := memoryRead
+            executeMemoryWriteback.memoryWrite := memoryWrite
+            executeMemoryWriteback.memoryFunction := memoryFunction
+            executeMemoryWriteback.atomicValid := atomicValid
+            executeMemoryWriteback.atomicOperation := atomicOperation
+            executeMemoryWriteback.illegal := illegal
+            executeMemoryWriteback.redirect := redirect
+            executeMemoryWriteback.redirectTarget := redirectTarget
+            serializedState := SerializedState.memory
+          }
+        }
+        is(SerializedState.memory) {
+          when(!io.memoryStall) {
+            fetchPc := fetchPcNext
+            decodeExecute.valid := false.B
+            executeMemoryWriteback.valid := false.B
+            serializedState := SerializedState.fetch
+          }
+        }
+      }
+    }
+  } else when(illegalTrap) {
     if (!mergeExecuteMemory) {
       executeMemoryWriteback := 0.U.asTypeOf(new ExecuteMemoryWriteback)
     }
@@ -745,6 +834,8 @@ class RvaiPipeline(
       executeMemoryWriteback.atomicValid := atomicValid
       executeMemoryWriteback.atomicOperation := atomicOperation
       executeMemoryWriteback.illegal := illegal
+      executeMemoryWriteback.redirect := redirect
+      executeMemoryWriteback.redirectTarget := redirectTarget
     }
 
     when(executeRedirect) {
@@ -810,11 +901,13 @@ class RvaiPipeline(
 
   // Payload registers are ignored until their corresponding valid bit is set.
   // Reset only the validity state so the datapath can use reset-free flops.
-  when(reset.asBool) {
-    fetchDecodeExecute.valid := false.B
-    decodeExecute.valid := false.B
-    if (!mergeExecuteMemory) {
-      executeMemoryWriteback.valid := false.B
+  if (!serializedInstructions) {
+    when(reset.asBool) {
+      fetchDecodeExecute.valid := false.B
+      decodeExecute.valid := false.B
+      if (!mergeExecuteMemory) {
+        executeMemoryWriteback.valid := false.B
+      }
     }
   }
 }

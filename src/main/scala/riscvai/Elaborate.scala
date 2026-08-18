@@ -67,6 +67,19 @@ object ElaborateTwoStages extends App {
   )
 }
 
+/** Emits the serialized multicycle processor. */
+object ElaborateMulticycle extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new RvaiMulticycle,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
 /** Emits the cached processor and its shared 32-bit memory interface. */
 object ElaborateCached extends App {
   ChiselStage.emitSystemVerilogFile(
@@ -136,6 +149,19 @@ object ElaborateSky130CachedThreeStagesExecuteMemory extends App {
 object ElaborateSky130CachedTwoStages extends App {
   ChiselStage.emitSystemVerilogFile(
     new Sky130CachedRvaiTwoStages,
+    args = args,
+    firtoolOpts = Array(
+      "--disable-all-randomization",
+      "--strip-debug-info",
+      "--lowering-options=disallowLocalVariables"
+    )
+  )
+}
+
+/** Emits the cached serialized multicycle core using Sky130 SRAM macros. */
+object ElaborateSky130CachedMulticycle extends App {
+  ChiselStage.emitSystemVerilogFile(
+    new Sky130CachedRvaiMulticycle,
     args = args,
     firtoolOpts = Array(
       "--disable-all-randomization",

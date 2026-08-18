@@ -8,7 +8,8 @@ import org.scalatest.matchers.must.Matchers
 abstract class CachedRvaiPipelineSpec(
     coreName: String,
     generate: => CachedRvaiPipeline,
-    minimumRetirementsDuringMiss: Int
+    minimumRetirementsDuringMiss: Int,
+    cycleScale: Int = 1
 ) extends AnyFreeSpec with Matchers with ChiselSim {
   private def bits(value: Int, width: Int): BigInt =
     BigInt(value) & ((BigInt(1) << width) - 1)
@@ -95,7 +96,7 @@ abstract class CachedRvaiPipelineSpec(
     var stallCycles = 0
     var retirementsDuringWatchedRead = 0
 
-    for (_ <- 0 until cycles) {
+    for (_ <- 0 until cycles * cycleScale) {
       dut.io.memoryReady.poke(false.B)
       dut.io.memoryReadData.poke(0.U)
       if (dut.io.pipelineStall.peek().litToBoolean) stallCycles += 1
@@ -330,4 +331,12 @@ class CachedRvaiTwoStagesSpec
       "CachedRvaiTwoStages",
       new CachedRvaiTwoStages(cacheBytes = 256, lineBytes = 16),
       minimumRetirementsDuringMiss = 0
+    )
+
+class CachedRvaiMulticycleSpec
+    extends CachedRvaiPipelineSpec(
+      "CachedRvaiMulticycle",
+      new CachedRvaiMulticycle(cacheBytes = 256, lineBytes = 16),
+      minimumRetirementsDuringMiss = 0,
+      cycleScale = 4
     )
