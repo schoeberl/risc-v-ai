@@ -2,12 +2,12 @@ package riscvai
 
 import chisel3._
 
-/** Configurable pipelined core with private 1 KiB instruction/data caches and
+/** Configurable pipelined core with private 4 KiB instruction/data caches and
   * one shared bus.
   */
 class CachedRvaiPipeline(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false,
     threeStages: Boolean = false,
@@ -121,14 +121,23 @@ class CachedRvaiPipeline(
   io.retiredValid := core.io.retiredValid
   io.retiredPc := core.io.retiredPc
   io.retiredInstruction := core.io.retiredInstruction
-  core.io.debugRegisterAddress := io.debugRegisterAddress
-  io.debugRegisterData := core.io.debugRegisterData
+  // The architectural register debug mux is useful to tests and benchmark
+  // diagnostics, but it is not part of the physical core interface.  Tying
+  // its address off in SRAM-macro builds lets synthesis remove the large
+  // asynchronous 32x32 read mux instead of timing it as an external path.
+  if (useAsicSram) {
+    core.io.debugRegisterAddress := 0.U
+    io.debugRegisterData := 0.U
+  } else {
+    core.io.debugRegisterAddress := io.debugRegisterAddress
+    io.debugRegisterData := core.io.debugRegisterData
+  }
 }
 
 /** Four-stage core with private instruction/data caches and one shared bus. */
 class CachedRvaiFourStages(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -142,7 +151,7 @@ class CachedRvaiFourStages(
 /** Three-stage core with private instruction/data caches and one shared bus. */
 class CachedRvaiThreeStages(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -156,7 +165,7 @@ class CachedRvaiThreeStages(
 /** Three-stage predecode variant with private caches and one shared bus. */
 class CachedRvaiThreeStagesPredecode(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -171,7 +180,7 @@ class CachedRvaiThreeStagesPredecode(
 /** Three-stage execute/memory variant with private caches and one shared bus. */
 class CachedRvaiThreeStagesExecuteMemory(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -186,7 +195,7 @@ class CachedRvaiThreeStagesExecuteMemory(
 /** Two-stage core with private caches and one shared bus. */
 class CachedRvaiTwoStages(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -200,7 +209,7 @@ class CachedRvaiTwoStages(
 /** Serialized multicycle core with private caches and one shared bus. */
 class CachedRvaiMulticycle(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -214,7 +223,7 @@ class CachedRvaiMulticycle(
 /** Textbook five-stage core with private caches and one shared bus. */
 class CachedRvaiFiveStages(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -228,7 +237,7 @@ class CachedRvaiFiveStages(
 /** Six-stage core with private caches and one shared bus. */
 class CachedRvaiSixStages(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -242,7 +251,7 @@ class CachedRvaiSixStages(
 /** Memory-split six-stage core with private caches and one shared bus. */
 class CachedRvaiSixStagesMemorySplit(
     resetVector: BigInt = 0,
-    cacheBytes: Int = 1024,
+    cacheBytes: Int = 4096,
     lineBytes: Int = 16,
     useAsicSram: Boolean = false
 ) extends CachedRvaiPipeline(
@@ -257,7 +266,7 @@ class CachedRvaiSixStagesMemorySplit(
 class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
     extends CachedRvaiFourStages(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -266,7 +275,7 @@ class Sky130CachedRvaiFourStages(resetVector: BigInt = 0)
 class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
     extends CachedRvaiThreeStages(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -275,7 +284,7 @@ class Sky130CachedRvaiThreeStages(resetVector: BigInt = 0)
 class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesPredecode(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -284,7 +293,7 @@ class Sky130CachedRvaiThreeStagesPredecode(resetVector: BigInt = 0)
 class Sky130CachedRvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
     extends CachedRvaiThreeStagesExecuteMemory(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -293,7 +302,7 @@ class Sky130CachedRvaiThreeStagesExecuteMemory(resetVector: BigInt = 0)
 class Sky130CachedRvaiTwoStages(resetVector: BigInt = 0)
     extends CachedRvaiTwoStages(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -302,7 +311,7 @@ class Sky130CachedRvaiTwoStages(resetVector: BigInt = 0)
 class Sky130CachedRvaiMulticycle(resetVector: BigInt = 0)
     extends CachedRvaiMulticycle(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -311,7 +320,7 @@ class Sky130CachedRvaiMulticycle(resetVector: BigInt = 0)
 class Sky130CachedRvaiFiveStages(resetVector: BigInt = 0)
     extends CachedRvaiFiveStages(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -320,7 +329,7 @@ class Sky130CachedRvaiFiveStages(resetVector: BigInt = 0)
 class Sky130CachedRvaiSixStages(resetVector: BigInt = 0)
     extends CachedRvaiSixStages(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )
@@ -329,7 +338,7 @@ class Sky130CachedRvaiSixStages(resetVector: BigInt = 0)
 class Sky130CachedRvaiSixStagesMemorySplit(resetVector: BigInt = 0)
     extends CachedRvaiSixStagesMemorySplit(
       resetVector = resetVector,
-      cacheBytes = 1024,
+      cacheBytes = 4096,
       lineBytes = 16,
       useAsicSram = true
     )

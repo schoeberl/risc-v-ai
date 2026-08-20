@@ -41,12 +41,12 @@ private[riscvai] class InstructionCache(
   private val wordCount = cacheBytes / 4
 
   private object State extends ChiselEnum {
-    val prime, lookup, refill = Value
+    val clear, prime, lookup, refill = Value
   }
-  private val state = RegInit(State.prime)
-  private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = CacheTagMemory(lineCount, tagBits, useAsicSram)
+  private val state = RegInit(State.clear)
+  private val tags = CacheTagMemory(lineCount, tagBits + 1, useAsicSram)
   private val data = CacheDataMemory(wordCount, useAsicSram)
+  private val clearIndex = RegInit(0.U(indexBits.W))
   private val requestIndex = Reg(UInt(indexBits.W))
   private val requestTag = Reg(UInt(tagBits.W))
   private val missBase = Reg(UInt(32.W))
@@ -60,12 +60,18 @@ private[riscvai] class InstructionCache(
   val nextWordAddress = io.cpuNextAddress(offsetBits + indexBits - 1, 2)
   tags.readEnable := io.cpuRequest
   tags.readAddress := nextIndex
-  tags.writeEnable := state === State.refill && io.memory.ready &&
+  val refillComplete = state === State.refill && io.memory.ready &&
     refillWord === (wordsPerLine - 1).U
-  tags.writeAddress := missIndex
-  tags.writeData := missTag
-  val lookupTag = tags.readData
-  val hit = valid(requestIndex) && lookupTag === requestTag
+  tags.writeEnable := state === State.clear || refillComplete
+  tags.writeAddress := Mux(state === State.clear, clearIndex, missIndex)
+  tags.writeData := Mux(
+    state === State.clear,
+    0.U,
+    Cat(true.B, missTag)
+  )
+  val lookupEntry = tags.readData
+  val lookupTag = lookupEntry(tagBits - 1, 0)
+  val hit = lookupEntry(tagBits) && lookupTag === requestTag
 
   // The SRAM address register and the core fetch-PC register capture the same
   // next-PC value. The synchronous read data therefore belongs to the current
@@ -90,14 +96,21 @@ private[riscvai] class InstructionCache(
     // The shared-memory protocol requires a request to remain asserted until
     // ready. Defer FENCE.I invalidation until the active refill word completes.
     invalidatePending := true.B
-  }.elsewhen(invalidateRequested) {
-    valid.foreach(_ := false.B)
-    requestIndex := nextIndex
-    requestTag := nextTag
+  }.elsewhen(state =/= State.clear && invalidateRequested) {
+    clearIndex := 0.U
     invalidatePending := false.B
-    state := State.lookup
+    state := State.clear
   }.otherwise {
     switch(state) {
+      is(State.clear) {
+        invalidatePending := false.B
+        when(clearIndex === (lineCount - 1).U) {
+          clearIndex := 0.U
+          state := State.prime
+        }.otherwise {
+          clearIndex := clearIndex + 1.U
+        }
+      }
       is(State.prime) {
         requestIndex := nextIndex
         requestTag := nextTag
@@ -114,14 +127,12 @@ private[riscvai] class InstructionCache(
           missIndex := requestIndex
           missTag := requestTag
           refillWord := 0.U
-          valid(requestIndex) := false.B
           state := State.refill
         }
       }
       is(State.refill) {
         when(io.memory.ready) {
           when(refillWord === (wordsPerLine - 1).U) {
-            valid(missIndex) := true.B
             // Prime a fresh synchronous read after the refill write. This avoids
             // relying on inferred-memory read-during-write behavior.
             state := State.prime
@@ -170,12 +181,12 @@ private[riscvai] class DataCache(
   private val wordCount = cacheBytes / 4
   private val memoryAddressBits = log2Ceil(wordCount)
   private object State extends ChiselEnum {
-    val idle, prime, prepareWrite, refill, writeThrough = Value
+    val clear, idle, prime, prepareWrite, refill, writeThrough = Value
   }
-  private val state = RegInit(State.idle)
-  private val valid = RegInit(VecInit(Seq.fill(lineCount)(false.B)))
-  private val tags = CacheTagMemory(lineCount, tagBits, useAsicSram)
+  private val state = RegInit(State.clear)
+  private val tags = CacheTagMemory(lineCount, tagBits + 1, useAsicSram)
   private val data = CacheDataMemory(wordCount, useAsicSram)
+  private val clearIndex = RegInit(0.U(indexBits.W))
 
   private val missBase = Reg(UInt(32.W))
   private val missIndex = Reg(UInt(indexBits.W))
@@ -199,12 +210,23 @@ private[riscvai] class DataCache(
   val lookupWordAddress = lookupAddress(offsetBits + indexBits - 1, 2)
   tags.readEnable := lookupEnable
   tags.readAddress := lookupIndex
-  tags.writeEnable := state === State.refill && io.memory.ready &&
+  val refillComplete = state === State.refill && io.memory.ready &&
     refillWord === (wordsPerLine - 1).U
-  tags.writeAddress := missIndex
-  tags.writeData := missTag
-  val lookupTag = tags.readData
-  val hit = valid(cpuIndex) && lookupTag === cpuTag
+  val invalidateEntry = state === State.idle && io.cpuRequest && io.cpuWrite
+  tags.writeEnable := state === State.clear || refillComplete || invalidateEntry
+  tags.writeAddress := Mux(
+    state === State.clear,
+    clearIndex,
+    Mux(refillComplete, missIndex, cpuIndex)
+  )
+  tags.writeData := Mux(
+    refillComplete,
+    Cat(true.B, missTag),
+    0.U
+  )
+  val lookupEntry = tags.readData
+  val lookupTag = lookupEntry(tagBits - 1, 0)
+  val hit = lookupEntry(tagBits) && lookupTag === cpuTag
   val hitData = data.readData
 
   val refillWrite = state === State.refill && io.memory.ready
@@ -238,6 +260,14 @@ private[riscvai] class DataCache(
   io.memory.writeMask := pendingWriteMask
 
   switch(state) {
+    is(State.clear) {
+      when(clearIndex === (lineCount - 1).U) {
+        clearIndex := 0.U
+        state := State.prime
+      }.otherwise {
+        clearIndex := clearIndex + 1.U
+      }
+    }
     is(State.idle) {
       when(io.cpuRequest) {
         when(io.cpuRead && !hit) {
@@ -246,12 +276,10 @@ private[riscvai] class DataCache(
           missIndex := cpuIndex
           missTag := cpuTag
           refillWord := 0.U
-          valid(cpuIndex) := false.B
           state := State.refill
         }.elsewhen(io.cpuWrite) {
           pendingWriteAddress := io.cpuAddress
           pendingWriteMask := io.cpuWriteMask
-          valid(cpuIndex) := false.B
           when(io.cpuRead) {
             pendingReadData := hitData
             state := State.prepareWrite
@@ -273,7 +301,6 @@ private[riscvai] class DataCache(
     is(State.refill) {
       when(io.memory.ready) {
         when(refillWord === (wordsPerLine - 1).U) {
-          valid(missIndex) := true.B
           // Avoid inferred-memory read-during-write behavior. The following
           // prime cycle reissues the held request to both synchronous memories.
           state := State.prime

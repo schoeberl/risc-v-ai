@@ -61,8 +61,8 @@ private[riscvai] class ChipFoundrySram1024x32 extends BlackBox {
   })
 }
 
-/** ASIC cache storage backed by a CF_SRAM_1024x32. A cache may use a prefix of
-  * the macro; the current 1 KiB caches use its first 256 words.
+/** ASIC cache storage backed by a CF_SRAM_1024x32. A smaller cache may use a
+  * prefix of the macro; the default 4 KiB caches use all 1024 words.
   */
 private[riscvai] class Sky130CacheDataMemory(depth: Int)
     extends CacheDataMemory(depth) {

@@ -27,6 +27,8 @@ class DataCacheSpec extends AnyFreeSpec with ChiselSim {
       dut.reset.poke(true.B)
       dut.clock.step()
       dut.reset.poke(false.B)
+      // The tag SRAM is cleared one cache line per cycle after reset.
+      dut.clock.step(16)
 
       // Launch the first lookup after priming the synchronous memories.
       dut.io.cpuNextAddress.poke(0.U)
@@ -89,6 +91,8 @@ class DataCacheSpec extends AnyFreeSpec with ChiselSim {
       dut.reset.poke(true.B)
       dut.clock.step()
       dut.reset.poke(false.B)
+      // The tag SRAM is cleared one cache line per cycle after reset.
+      dut.clock.step(16)
 
       def missAndRefill(base: Int, words: Seq[BigInt]): Unit = {
         dut.io.cpuNextAddress.poke(base.U)
