@@ -555,6 +555,7 @@ with repair buffers.
 | Power | 50.633 mW | 48.800 mW | 49.201 mW | 49.174 mW | 49.204 mW | 50.272 mW | 51.562 mW | 52.050 mW | 52.613 mW |
 | CoreMark CPI | 4.523 | 1.523 | 1.695 | 1.695 | 1.774 | 1.835 | 1.835 | 1.975 | 1.923 |
 | Projected iterations/s | 51.28 | 104.73 | 87.71 | 86.86 | 94.69 | 102.75 | 110.79 | 92.87 | 89.66 |
+| Embench-IoT weighted CPI | 4.664 | 1.663 | 1.800 | 1.800 | 1.919 | 1.929 | 1.929 | 2.054 | 1.951 |
 
 The CF SRAM model uses rising-edge address and data timing, so all nine Fmax
 values use the ordinary `1 / (10 ns - WNS)` full-cycle estimate. These runs use
@@ -708,25 +709,27 @@ EMBENCH_BENCHMARK=aha-mont64 make embench
 EMBENCH_PIPELINE='Five stages' make embench
 ```
 
-| Benchmark | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages | Six stages + ID/RR split | Six stages + memory split |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| crc32 | 1.595 | 1.732 | 1.732 | 1.868 | 1.868 | 1.868 | 2.005 | 1.868 |
-| edn | 2.115 | 2.212 | 2.212 | 2.312 | 2.311 | 2.311 | 2.408 | 2.307 |
-| huffbench | 1.389 | 1.562 | 1.562 | 1.700 | 1.717 | 1.717 | 1.872 | 1.757 |
-| matmult-int | 1.953 | 2.088 | 2.088 | 2.223 | 2.223 | 2.223 | 2.358 | 2.223 |
-| nettle-aes | 1.855 | 1.868 | 1.868 | 1.882 | 1.880 | 1.880 | 1.889 | 1.879 |
-| nettle-sha256 | 2.353 | 2.382 | 2.382 | 2.411 | 2.404 | 2.404 | 2.433 | 2.400 |
-| slre | 2.030 | 2.205 | 2.205 | 2.388 | 2.407 | 2.407 | 2.534 | 2.450 |
-| statemate | 2.768 | 2.892 | 2.892 | 3.057 | 3.038 | 3.038 | 3.153 | 3.030 |
-| **Instruction-weighted aggregate** | **1.663** | **1.800** | **1.800** | **1.919** | **1.929** | **1.929** | **2.054** | **1.951** |
+| Benchmark | Multicycle | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages | Six stages + ID/RR split | Six stages + memory split |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| crc32 | 4.595 | 1.595 | 1.732 | 1.732 | 1.868 | 1.868 | 1.868 | 2.005 | 1.868 |
+| edn | 5.117 | 2.115 | 2.212 | 2.212 | 2.312 | 2.311 | 2.311 | 2.408 | 2.307 |
+| huffbench | 4.390 | 1.389 | 1.562 | 1.562 | 1.700 | 1.717 | 1.717 | 1.872 | 1.757 |
+| matmult-int | 4.953 | 1.953 | 2.088 | 2.088 | 2.223 | 2.223 | 2.223 | 2.358 | 2.223 |
+| nettle-aes | 4.857 | 1.855 | 1.868 | 1.868 | 1.882 | 1.880 | 1.880 | 1.889 | 1.879 |
+| nettle-sha256 | 5.357 | 2.353 | 2.382 | 2.382 | 2.411 | 2.404 | 2.404 | 2.433 | 2.400 |
+| slre | 5.039 | 2.030 | 2.205 | 2.205 | 2.388 | 2.407 | 2.407 | 2.534 | 2.450 |
+| statemate | 5.791 | 2.768 | 2.892 | 2.892 | 3.057 | 3.038 | 3.038 | 3.153 | 3.030 |
+| **Instruction-weighted aggregate** | **4.664** | **1.663** | **1.800** | **1.800** | **1.919** | **1.929** | **1.929** | **2.054** | **1.951** |
 
 The aggregate is total measured cycles divided by total retired instructions,
 so longer workloads carry proportionally more weight. The results reinforce the
 CoreMark ordering while showing that it is not peculiar to a single program:
 the two-stage core has the lowest CPI on every selected workload, and fetch
-predecode remains cycle-equivalent to the plain three-stage core. Splitting
-ID/RR produces the highest aggregate CPI; splitting memory is less costly but
-adds CPI relative to five stages.
+predecode remains cycle-equivalent to the plain three-stage core. The
+multicycle core has the expected highest CPI because it serializes instruction
+execution. Among the pipelined variants, splitting ID/RR produces the highest
+aggregate CPI; splitting memory is less costly but adds CPI relative to five
+stages.
 
 `sglib-combined` is not part of the default table because its built-in check
 exposed a repeatable processor correctness failure on the two-stage and plain

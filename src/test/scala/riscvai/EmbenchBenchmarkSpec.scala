@@ -83,6 +83,7 @@ class EmbenchBenchmarkSpec extends AnyFreeSpec with Matchers with ChiselSim {
   )
 
   private val allConfigurations = Seq(
+    Configuration("Multicycle", () => new CachedRvaiMulticycle()),
     Configuration("Two stages", () => new CachedRvaiTwoStages()),
     Configuration("Three stages", () => new CachedRvaiThreeStages()),
     Configuration(
