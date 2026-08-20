@@ -18,7 +18,7 @@ An experimental AI generated RISC-V processor written in
 Use the **Open in GitHub Codespaces** badge above, or select **Code**,
 **Codespaces**, **Create codespace on main** on GitHub. The checked-in dev
 container provides JDK 17, sbt, Verilator, the RISC-V bare-metal compiler, and
-Nix. Its first-run setup initializes the pinned CoreMark and LibreLane
+Nix. Its first-run setup initializes the pinned CoreMark, Embench-IoT, and LibreLane
 submodules and downloads the Scala dependencies.
 
 After the terminal opens, verify the development environment with:
@@ -443,8 +443,8 @@ Generate the cached Sky130 multicycle variant with:
 make rtl-sky130-cached-multicycle
 ```
 
-The generated files are written to `generated/`. Initialize the pinned CoreMark
-and LibreLane submodules after cloning with:
+The generated files are written to `generated/`. Initialize the pinned CoreMark,
+Embench-IoT, and LibreLane submodules after cloning with:
 
 ```sh
 git submodule update --init
@@ -682,6 +682,61 @@ both performance- and validation-seed runs. The projected figures above are
 therefore deliberately labeled iterations/s rather than `CoreMark 1.0` scores.
 They are useful for comparing these pipelines because the program, compiler,
 cache geometry, and memory model are otherwise identical.
+
+### Embench-IoT simulation comparison
+
+The repository also pins
+[Embench-IoT 1.0](https://github.com/embench/embench-iot) at commit
+`0466a18e4f6b47e19598d7c6ba72916d54b68f65`. Build all 19 bare-metal RV32IM
+programs and run the default RTL comparison with:
+
+```sh
+git submodule update --init
+make embench
+```
+
+The port uses GCC with `-O2 -march=rv32im_zicsr -mabi=ilp32`. Each measurement
+executes one fundamental benchmark repetition after one warm-up repetition and
+checks Embench's built-in result before reporting CPI. This deliberately short
+run makes cycle-accurate RTL simulation practical; it is a pipeline comparison,
+not an official Embench speed score. The default set contains eight integer
+workloads that complete in a practical simulation time. Any built program can
+instead be selected with, for example:
+
+```sh
+EMBENCH_BENCHMARK=aha-mont64 make embench
+EMBENCH_PIPELINE='Five stages' make embench
+```
+
+| Benchmark | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages | Six stages + ID/RR split | Six stages + memory split |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| crc32 | 1.595 | 1.732 | 1.732 | 1.868 | 1.868 | 1.868 | 2.005 | 1.868 |
+| edn | 2.115 | 2.212 | 2.212 | 2.312 | 2.311 | 2.311 | 2.408 | 2.307 |
+| huffbench | 1.389 | 1.562 | 1.562 | 1.700 | 1.717 | 1.717 | 1.872 | 1.757 |
+| matmult-int | 1.953 | 2.088 | 2.088 | 2.223 | 2.223 | 2.223 | 2.358 | 2.223 |
+| nettle-aes | 1.855 | 1.868 | 1.868 | 1.882 | 1.880 | 1.880 | 1.889 | 1.879 |
+| nettle-sha256 | 2.353 | 2.382 | 2.382 | 2.411 | 2.404 | 2.404 | 2.433 | 2.400 |
+| slre | 2.030 | 2.205 | 2.205 | 2.388 | 2.407 | 2.407 | 2.534 | 2.450 |
+| statemate | 2.768 | 2.892 | 2.892 | 3.057 | 3.038 | 3.038 | 3.153 | 3.030 |
+| **Instruction-weighted aggregate** | **1.663** | **1.800** | **1.800** | **1.919** | **1.929** | **1.929** | **2.054** | **1.951** |
+
+The aggregate is total measured cycles divided by total retired instructions,
+so longer workloads carry proportionally more weight. The results reinforce the
+CoreMark ordering while showing that it is not peculiar to a single program:
+the two-stage core has the lowest CPI on every selected workload, and fetch
+predecode remains cycle-equivalent to the plain three-stage core. Splitting
+ID/RR produces the highest aggregate CPI; splitting memory is less costly but
+adds CPI relative to five stages.
+
+`sglib-combined` is not part of the default table because its built-in check
+exposed a repeatable processor correctness failure on the two-stage and plain
+three-stage cores (result `0x00003aca`), while the same binary passes on the
+four-stage and merged execute/memory cores. The integration keeps that program
+selectable so the discrepancy can serve as a focused regression while its root
+cause is investigated. Floating-point-heavy or especially long programs such
+as `cubic` and `picojpeg` are likewise omitted from the default matrix because
+this RV32IM target has no hardware floating point and per-cycle RTL simulation
+would dominate the comparison time.
 
 ### Historical PPA experiments
 
