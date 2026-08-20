@@ -4,3 +4,6 @@
 [submodule "external/librelane"]
 	path = external/librelane
 	url = https://github.com/librelane/librelane.git
+[submodule "benchmarks/embench-iot"]
+	path = benchmarks/embench-iot
+	url = https://github.com/embench/embench-iot.git

@@ -1,4 +1,4 @@
-.PHONY: coremark coremark-build rtl rtl-five-stages rtl-six-stages rtl-six-stages-memory-split rtl-multicycle rtl-two-stages rtl-three-stages rtl-three-stages-predecode \
+.PHONY: coremark coremark-build embench embench-build rtl rtl-five-stages rtl-six-stages rtl-six-stages-memory-split rtl-multicycle rtl-two-stages rtl-three-stages rtl-three-stages-predecode \
 	rtl-three-stages-execute-memory rtl-cached rtl-sky130-cached \
 	rtl-sky130-cached-five-stages rtl-sky130-cached-six-stages rtl-sky130-cached-six-stages-memory-split rtl-sky130-cached-multicycle rtl-sky130-cached-two-stages \
 	rtl-sky130-cached-three-stages rtl-sky130-cached-three-stages-predecode \
@@ -21,6 +21,7 @@ LIBRELANE_ROOT ?= $(CURDIR)/external/librelane
 SKY130_PDK_ROOT ?= $(HOME)/.ciel
 PPA_RUN_TAG ?= 100mhz
 COREMARK_BIN := $(CURDIR)/build/coremark/coremark.bin
+EMBENCH_BIN_DIR := $(CURDIR)/build/embench
 POST_CTS_ARGS := --skip Checker.PowerGridViolations --to OpenROAD.STAMidPNR-1
 
 coremark-build:
@@ -28,6 +29,12 @@ coremark-build:
 
 coremark: coremark-build
 	COREMARK_BIN=$(COREMARK_BIN) sbt "testOnly riscvai.CoreMarkBenchmarkSpec"
+
+embench-build:
+	$(MAKE) -C benchmarks/riscvai-embench all
+
+embench: embench-build
+	EMBENCH_BIN_DIR=$(EMBENCH_BIN_DIR) sbt "testOnly riscvai.EmbenchBenchmarkSpec"
 
 rtl:
 	sbt "runMain riscvai.Elaborate --target-dir $(RTL_DIR)"
