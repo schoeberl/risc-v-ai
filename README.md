@@ -96,6 +96,34 @@ data-memory interface, plus cached top-level wrappers:
 Memories are kept outside the cores so they can be connected to simulation
 models, FPGA block RAM, or a system bus.
 
+### Pipeline organization
+
+The pipeline names below are the same as those used in the PPA comparison.
+A slash means that the operations are combined within one pipeline stage.
+
+| Pipeline | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Stage 5 | Stage 6 |
+|---|---|---|---|---|---|---|
+| Two stages | IF/ID/RR/EX | MEM/WB | — | — | — | — |
+| Three stages | IF | ID/RR/EX | MEM/WB | — | — | — |
+| Three stages + fetch predecode | IF/predecode | ID/RR/EX | MEM/WB | — | — | — |
+| Three stages + execute/memory | IF | ID/RR/AG | EX/MEM/WB | — | — | — |
+| Four stages | IF | ID/RR | EX | MEM/WB | — | — |
+| Five stages | IF | ID/RR | EX | MEM | WB | — |
+| Six stages + ID/RR split | IF | ID | RR | EX | MEM | WB |
+| Six stages + memory split | IF | ID/RR | EX | MEM1 | MEM2 | WB |
+
+Abbreviations:
+
+- **IF:** instruction fetch
+- **ID:** instruction decode
+- **RR:** register read
+- **AG:** effective-address generation
+- **EX:** ALU, multiply/divide, and control-flow execution
+- **MEM1:** synchronous data-cache request
+- **MEM2:** data-cache response
+- **MEM:** data-memory access
+- **WB:** register writeback
+
 ### Six-stage memory-split pipeline
 
 `RvaiSixStagesMemorySplit` retains the five-stage frontend and branch behavior,
