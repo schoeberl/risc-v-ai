@@ -1,0 +1,16 @@
+DESIGN_NAME: IdealMemoryRvaiFourStages
+VERILOG_FILES:
+  - dir::../../generated/IterativeDivider.sv
+  - dir::../../generated/MachineCsrs.sv
+  - dir::../../generated/PipelinedMultiplier.sv
+  - dir::../../generated/RvaiFourStages.sv
+  - dir::../../generated/IdealMemoryRvaiFourStages.sv
+
+CLOCK_PORT: clock
+CLOCK_PERIOD: 10.0
+RUN_POST_GPL_DESIGN_REPAIR: false
+RUN_POST_CTS_RESIZER_TIMING: false
+
+pdk::sky130A:
+  FP_CORE_UTIL: 40
+  STD_CELL_LIBRARY: sky130_fd_sc_hd
