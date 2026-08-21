@@ -534,6 +534,79 @@ setup and clock-to-data arcs. Its higher modeled power is the principal cost;
 the two macros are substantially smaller. Each physical data macro has 4 KiB
 capacity, which the current cache now uses in full.
 
+### Ideal-memory pipeline comparison
+
+This comparison removes the memory subsystem so the results can be compared
+with processor studies that report only the core. The physical top level has
+independent combinational instruction- and data-memory ports, no caches, SRAMs,
+arbiter, or memory-stall path, and ties off the architectural-register debug
+port. Simulation returns both instruction and data words in the same cycle as
+their addresses, keeps the instruction response valid, and never asserts a
+memory wait state. Stores take effect at the clock edge with byte enables.
+
+The synthesis setup otherwise matches the cache-inclusive comparison: LibreLane
+Classic, Sky130A `sky130_fd_sc_hd`, a 10 ns target, nominal-corner post-CTS STA,
+and no post-global-placement design repair or post-CTS resizer optimization.
+The standard LibreLane boundary constraint reserves 20% of the target period
+for input and output delay; no memory implementation is included in that delay
+or in the reported area. Estimated Fmax is `1 / (10 ns - WNS)`. Power is
+estimated at the requested 100 MHz activity point even when timing does not
+close at 100 MHz.
+
+| Metric | Multicycle | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages | Six stages + ID/RR split | Six stages + memory split |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Estimated Fmax | 77.74 MHz | 51.97 MHz | 49.37 MHz | 48.42 MHz | 59.74 MHz | 62.02 MHz | 73.63 MHz | 72.09 MHz | 69.50 MHz |
+| Standard-cell area | 219,312 µm² | 209,645 µm² | 213,278 µm² | 214,782 µm² | 215,135 µm² | 217,188 µm² | 221,726 µm² | 225,376 µm² | 229,160 µm² |
+| Standard-cell instances | 25,785 | 25,068 | 25,404 | 25,505 | 25,638 | 25,631 | 26,237 | 26,612 | 26,932 |
+| Sequential cells | 2,387 | 2,157 | 2,223 | 2,227 | 2,212 | 2,352 | 2,392 | 2,459 | 2,564 |
+| Power | 31.014 mW | 18.313 mW | 22.823 mW | 22.930 mW | 23.148 mW | 21.666 mW | 21.945 mW | 22.426 mW | 22.550 mW |
+| CoreMark CPI | 4.180 | 1.180 | 1.351 | 1.351 | 1.429 | 1.494 | 1.494 | 1.618 | 1.583 |
+| Projected iterations/s | 59.36 | 140.58 | 116.68 | 114.43 | 133.43 | 132.49 | 157.30 | 142.15 | 140.14 |
+| Embench-IoT weighted CPI | 4.202 | 1.202 | 1.337 | 1.337 | 1.453 | 1.463 | 1.463 | 1.589 | 1.487 |
+
+Every benchmark passed its built-in result check. The CoreMark measurements use
+313,331 retired instructions in every organization; cycles per iteration are
+1,309,700, 369,707, 423,156, 423,156, 447,759, 468,090, 468,090, 507,116, and
+495,927 in table order. Projected iterations/s combines those cycle counts with
+the ideal-core Fmax and is a comparative projection, not an official CoreMark
+score.
+
+The ideal-memory Embench-IoT CPI results are:
+
+| Benchmark | Multicycle | Two stages | Three stages | Three stages + fetch predecode | Three stages + execute/memory | Four stages | Five stages | Six stages + ID/RR split | Six stages + memory split |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| crc32 | 4.272 | 1.272 | 1.409 | 1.409 | 1.545 | 1.545 | 1.545 | 1.681 | 1.545 |
+| edn | 4.982 | 1.982 | 2.080 | 2.080 | 2.178 | 2.179 | 2.179 | 2.278 | 2.180 |
+| huffbench | 4.000 | 1.000 | 1.173 | 1.173 | 1.310 | 1.328 | 1.328 | 1.483 | 1.368 |
+| matmult-int | 4.578 | 1.578 | 1.713 | 1.713 | 1.848 | 1.848 | 1.848 | 1.983 | 1.848 |
+| nettle-aes | 4.061 | 1.061 | 1.072 | 1.072 | 1.083 | 1.083 | 1.083 | 1.094 | 1.084 |
+| nettle-sha256 | 4.000 | 1.000 | 1.035 | 1.035 | 1.061 | 1.065 | 1.065 | 1.096 | 1.070 |
+| slre | 4.000 | 1.000 | 1.153 | 1.153 | 1.254 | 1.285 | 1.285 | 1.412 | 1.350 |
+| statemate | 4.000 | 1.000 | 1.119 | 1.119 | 1.228 | 1.249 | 1.249 | 1.363 | 1.269 |
+| **Instruction-weighted aggregate** | **4.202** | **1.202** | **1.337** | **1.337** | **1.453** | **1.463** | **1.463** | **1.589** | **1.487** |
+
+Removing the caches lowers the weighted Embench CPI by about 0.30 in every
+organization. It also moves the physical critical path into the core. The
+multicycle organization has the highest Fmax, while the five-stage organization
+has the highest projected CoreMark throughput. Its extra stage now isolates the
+core logic effectively; with caches present, that benefit was hidden by shared
+cache and pipeline-hold feedback. The ID/RR-split six-stage core similarly rises
+from 47.07 MHz with caches to 72.09 MHz without them, but its additional hazard
+penalty keeps projected throughput below five stages.
+
+Reproduce the simulations and all nine post-CTS runs with:
+
+```sh
+git submodule update --init
+make coremark-ideal
+make embench-ideal
+make ppa-ideal-all
+```
+
+The post-CTS reports are written below
+`ppa/librelane/runs/ideal-core-*-100mhz/34-openroad-stamidpnr-1/`, and the final
+machine-readable metrics are in each run's `final/metrics.json`.
+
 ### Cache-inclusive pipeline comparison
 
 This table compares only pipeline organization: every entry includes the same

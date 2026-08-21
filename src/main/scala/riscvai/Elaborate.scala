@@ -1,5 +1,6 @@
 package riscvai
 
+import chisel3.RawModule
 import circt.stage.ChiselStage
 
 /** Emits synthesis-ready SystemVerilog for the four-stage processor. */
@@ -117,6 +118,55 @@ object ElaborateMulticycle extends App {
       "--lowering-options=disallowLocalVariables"
     )
   )
+}
+
+private object IdealMemoryElaboration {
+  def emit(module: => RawModule, args: Array[String]): Unit =
+    ChiselStage.emitSystemVerilogFile(
+      module,
+      args = args,
+      firtoolOpts = Array(
+        "--disable-all-randomization",
+        "--strip-debug-info",
+        "--lowering-options=disallowLocalVariables"
+      )
+    )
+}
+
+object ElaborateIdealMemoryMulticycle extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiMulticycle, args)
+}
+
+object ElaborateIdealMemoryTwoStages extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiTwoStages, args)
+}
+
+object ElaborateIdealMemoryThreeStages extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiThreeStages, args)
+}
+
+object ElaborateIdealMemoryThreeStagesPredecode extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiThreeStagesPredecode, args)
+}
+
+object ElaborateIdealMemoryThreeStagesExecuteMemory extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiThreeStagesExecuteMemory, args)
+}
+
+object ElaborateIdealMemoryFourStages extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiFourStages, args)
+}
+
+object ElaborateIdealMemoryFiveStages extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiFiveStages, args)
+}
+
+object ElaborateIdealMemorySixStages extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiSixStages, args)
+}
+
+object ElaborateIdealMemorySixStagesMemorySplit extends App {
+  IdealMemoryElaboration.emit(new IdealMemoryRvaiSixStagesMemorySplit, args)
 }
 
 /** Emits the cached processor and its shared 32-bit memory interface. */
